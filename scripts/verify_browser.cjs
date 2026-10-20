@@ -123,7 +123,7 @@ fs.mkdirSync(output, { recursive: true });
     await page.getByRole('button', { name: '새 작업' }).click();
     await page.locator('input[type=file]').setInputFiles({ name: 'public.md', mimeType: 'text/markdown', buffer: Buffer.from('공개 메모\n\n<script>window.evil=true</script>') });
     await page.waitForFunction(() => document.querySelector('#source-text').value.includes('<script>'));
-    assert((await page.locator('#source-text').inputValue()).includes('<script>')); 
+    assert((await page.locator('#source-text').inputValue()).includes('<script>'));
     await page.getByRole('button', { name: '재료 정리하기' }).click();
     await page.getByText('재료 정리 완료', { exact: false }).waitFor();
     assert.equal(await page.evaluate(() => window.evil), undefined, 'Raw document HTML executed');
