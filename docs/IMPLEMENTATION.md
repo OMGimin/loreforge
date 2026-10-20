@@ -2,7 +2,7 @@
 
 ## 구현 목표
 
-키워드 입력부터 생성·검토·최대 1회 수정·그래프 탐색·채택·이어쓰기까지 연결한다. Vue 3/TypeScript/Vite/Cytoscape.js와 FastAPI/Pydantic/SQLite/LangGraph/OpenAI Responses를 사용한다. 공개용 가상 데이터로 모의 검증과 실제 API 검증을 구분한다.
+키워드 입력부터 생성·검토·최대 1회 수정·그래프 탐색·채택·이어쓰기까지 연결한다. Vue 3/TypeScript/Vite/Cytoscape.js와 FastAPI/Pydantic/SQLite/LangGraph/OpenAI Responses를 사용한다. 공개용 가상 데이터로 모의 검증과 실제 API 검증을 구분한다. 별도 개인 원고 검증은 공통 기능의 이해·평가용이며 공개 fixtures와 분리한다.
 
 ## 작업 분담
 
@@ -30,16 +30,18 @@ Run 최소 필드: `id, source_id, analysis_id, status, stage, request, context:
 
 Run·analysis와 각 호출에 `prompt_version`을 기록하고 호출에는 요청 모델과 `response_model`을 구분한다. 실패 응답의 확인된 토큰도 합산하며, 응답을 받지 못한 호출은 `usage_known: false`와 경고로 남긴다.
 
-Review: `{document_ref, issues: Issue[]}`. Issue: `{id, kind, reason, suggestion, evidence: Evidence[], status: "open"|"resolved"}`. kind는 conflict_candidate/internal_conflict/missing_explanation/intent_question. 이전 초안의 쟁점을 수정본에 섞지 않는다. 사실 후보 Fact: `{id, text, kind, basis, evidence}`.
+Review: `{document_ref, issues: Issue[]}`. Issue: `{id, kind, reason, suggestion, evidence: Evidence[], status: "open"|"resolved"}`. kind는 conflict_candidate/internal_conflict/missing_explanation/intent_question. 현재 문서의 검토와 과거 미해결 쟁점을 구분한다. `pending_issues`에는 원래 문서·근거 스냅샷을 보존하며, 의도 질문을 수정·채택·이어쓰기로 자동 해결하지 않는다. 이어받은 쟁점은 `context.unresolved_issues`로 전달하고 이전 초안을 확정 기준 문서로 편입하지 않는다. 사실 후보 Fact: `{id, text, kind, basis, evidence}`.
 
 StoryDocument는 SETTING_DOCUMENT_FORMAT.md를 따른다. 서버 필드: `document_id, version, schema_version, kind, decision, context_version, parent_document_ref, graph_status, warnings`. 본문 필드: `title, passages, entities, relations`. 문서 참조는 `document_id:version`, 항목 참조는 여기에 `:entity_id`를 붙인다.
 
 ## 구현 정책
 
-분석/창작/검토 모델은 각각 OPENAI_ANALYST_MODEL=gpt-5.4-mini, OPENAI_WRITER_MODEL=gpt-5.4, OPENAI_REVIEWER_MODEL=gpt-5.4. OPENAI_API_KEY는 서버에서만 읽는다. LORE_PROVIDER=mock은 테스트·명시적 모의 시연 전용이며 API 키 부재의 자동 대체가 아니다. 데이터 경로 LORE_DB_PATH 기본 runtime/loreforge.db. LangSmith는 실행별 trace opt-in이며 기본 off다. 본문·요청·프롬프트는 전송하지 않고 작업·모델·분기·MCP·토큰 등 메타데이터만 전송한다.
+분석/창작/검토 모델은 각각 OPENAI_ANALYST_MODEL=gpt-5.4-mini, OPENAI_WRITER_MODEL=gpt-5.4, OPENAI_REVIEWER_MODEL=gpt-5.4. OPENAI_API_KEY는 서버에서만 읽는다. LORE_PROVIDER=mock은 테스트·명시적 모의 시연 전용이며 API 키 부재의 자동 대체가 아니다. 데이터 경로 LORE_DB_PATH 기본 runtime/loreforge.db. LangSmith는 실행별 trace opt-in이며 기본 off다. 개인 확인에 사용할 기존 설정집 개인 검증은 분석·생성 모두 `trace=False`로 실행하고 원문·생성물·DB·평가 원문을 ignored `runtime/`에만 저장한다. 작품별 기능·프롬프트 변경은 하지 않으며 공개 fixtures를 유지한다. 본문·요청·프롬프트는 전송하지 않고 작업·모델·분기·MCP·토큰 등 메타데이터만 전송한다.
 
 정상 5회/재시도 포함 6회, 자동 수정 1회, SDK 재시도 0, 429/일시적 5xx 전체 1회 재시도. 호출 120초/자동 실행 600초. 기준 20,000자/요청 2,000자. raw 입력·조건·채택 문서만 기준에 포함한다. 단일 프로세스에서 동시 AI 작업 1개. 서버 재시작 시 running은 interrupted 처리하고 재개하지 않는다.
 
 ## 검증 기록
 
-로컬 MVP 구현을 마쳤다. 자동 검사 31개, 실제 MCP stdio, 브라우저 전체 시나리오, 공개 입력의 실제 OpenAI 흐름을 검증했다. 명령·실측·프롬프트 개선 전후·미검증 범위는 [구현 결과](RESULTS.md)에 기록한다. LangSmith는 콘텐츠 없는 메타데이터 전송 코드와 모의 Client를 확인했지만 외부 수신은 키 미설정으로 확인하지 못했다.
+로컬 MVP 구현 뒤 자동·타입·빌드 검사, 실제 MCP stdio, 모의 브라우저 시나리오, 공개 입력의 실제 첫 생성·채택 후 이어쓰기와 별도 폴더 설치를 확인했다. 최초 구현의 자동 검사 31개는 초기 기록이며 추가 회귀·검증 도구 테스트의 최신 수는 [구현 결과](RESULTS.md)에 기록한다. 새 검토 사례 6건은 v3·v4에서 각각 기대 판단과 일치했다.
+
+LangSmith는 원격 API에서 분석·생성 root 2개와 총 10개 span을 조회해 모델·토큰·MCP·수정 분기·최종 상태를 대조했다. 웹 화면 로그인 후 표시는 미확인이다. 개인 원고 검증은 실제 생성·검토·1회 수정·재검토를 실행했고 남은 지적 2건을 표시했다. 사람 평가·채택은 미확인이다. 발표자료·5분 리허설은 현재 필수 산출물에서 제외하고 실행·설계·검증·한계 문서는 유지한다.
