@@ -17,3 +17,12 @@ test('missing references never invent paragraph numbers', () => {
   assert.equal(labels.passageLabel(draft, 'p001'), '찾을 수 없는 문단')
   assert.equal(labels.evidenceLabel(undefined, 'p001'), '이전 문서의 근거')
 })
+
+test('finding prose translates only cited exact IDs and keeps saved content intact', () => {
+  const doc = { ...draft, document_id: 'doc', version: 2 }
+  const issue = { evidence: [{ document_ref: 'doc:2', passage_id: 'p999' }] }
+  const original = 'p999와 p9999, p001 및 일반 단어는 구분한다.'
+  assert.equal(labels.readableIssueText(original, issue, [doc]), '첫 초안 · 1번 문단과 p9999, p001 및 일반 단어는 구분한다.')
+  assert.equal(original, 'p999와 p9999, p001 및 일반 단어는 구분한다.')
+  assert.equal(labels.readableIssueText(original, issue, [{ ...doc, version: 3 }]), original)
+})

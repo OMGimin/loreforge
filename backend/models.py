@@ -94,6 +94,7 @@ class AnalyzeInput(Strict):
     trace: bool = False
 
 class RunInput(AnalyzeInput):
+    mode: Literal["create", "review"] = "create"
     analysis_id: str | None = None
     accepted_run_id: str | None = None
     constraints: list[str] = Field(default_factory=list, max_length=100)
@@ -103,6 +104,8 @@ class RunInput(AnalyzeInput):
     def one_origin(self):
         if bool(self.analysis_id) == bool(self.accepted_run_id):
             raise ValueError("analysis_id와 accepted_run_id 중 하나를 지정해주세요")
+        if self.mode == "review" and self.accepted_run_id:
+            raise ValueError("검토 모드는 완료된 analysis_id만 사용할 수 있습니다")
         if any(not c.strip() for c in self.constraints):
             raise ValueError("빈 조건은 제외해주세요")
         return self

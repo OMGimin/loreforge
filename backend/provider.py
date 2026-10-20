@@ -5,7 +5,7 @@ import os
 import time
 from .models import StructuredAnalysis, StructuredStory, ReviewOutput, StoryOutput, AnalysisOutput
 
-PROMPT_VERSION = "loreforge-v5-content-first"
+PROMPT_VERSION = "loreforge-v6-source-review"
 
 MODELS = {"analyst": "gpt-5.4-mini", "writer": "gpt-5.4", "reviewer": "gpt-5.4"}
 
@@ -58,8 +58,12 @@ class OpenAIProvider:
             "writer": "한국어 창작 담당이다. 기준·보호 조건·요청을 지키는 첫 설정 또는 다음 사건 하나를 만든다. title, 고유 ID passages, entities, relations를 반환한다. 수정 단계에서는 제공된 실행 가능한 쟁점만 반영하고 창작 의도 질문을 임의 결정하지 않는다. passages에는 설정·인물·사건의 내용과 구체적인 선택지만 직접 쓴다. 요청한 설명문·설정집 형식을 유지해도 되며 소설 문체를 강제하지 않는다. 문서의 작성 목적, 검토용·비교용·미확정이라는 안내, 원문을 유지했다는 보고, 독자에게 하는 작업 설명은 본문에 넣지 않는다. 예를 들어 '이 문서는 검토용 제안본이다', '이야기의 시작은 변하지 않는다' 같은 서문 대신 실제 설정이나 사건부터 쓴다. 제안·채택 상태는 서비스 화면이 별도로 표시한다. 다만 설정 안에서 아직 결정되지 않은 선택지나 조건은 삭제하거나 확정하지 말고 해당 내용 옆에 구체적으로 남긴다. 이 규칙은 첫 생성과 수정 단계 모두에 적용하며, 수정할 때도 실제 설정 내용은 보존한다.",
             "reviewer": "설정 검토 담당이다. 기준과 대상의 충돌은 conflict_candidate, 내부 모순은 internal_conflict, 설명 부족은 missing_explanation, 창작 의도 확인은 intent_question으로 구분한다. 충돌 후보는 기준과 대상 양쪽 근거, 내부 모순은 대상의 서로 다른 두 문단 근거가 필요하다. 수정본 검토는 현재 수정본만 평가하며 과거 초안 쟁점을 복사하지 않는다. 실제 위치를 찾지 못하면 모순이라고 단정하지 않는다. 새 쟁점 상태는 open이다. 이 서비스는 창작을 위한 것이므로 기준에 없는 인물·관계·장소·사건을 새로 제안하는 것은 정상이다. 기준과 충돌하지 않는 신규 설정이라는 이유만으로 의도 확인 질문을 만들지 않는다. 사건 사이의 이동 과정·시간·행동 이유가 누락된 경우에는 missing_explanation으로 분류하고, 본문에 없는 이동 방향이나 의도를 사실처럼 추정하지 않는다. intent_question은 실제 기준이나 요청에서 서로 양립하기 어려운 창작 방향이 드러나 작가의 선택 없이는 검토를 진행할 수 있을 때에만 사용한다. 단순한 정보 부재나 통상적인 창작적 보충은 그 사유가 아니다."
         }
+        if role == "reviewer" and stage == "review_source":
+            instructions["reviewer"] = instructions["reviewer"].replace("내부 모순은 대상의 서로 다른 두 문단 근거가 필요하다.", "내부 모순은 원문의 서로 충돌하는 두 주장과 실제 문단 근거가 필요하다. 두 주장이 같은 문단 안에 있어도 검토한다.")
         system = common + instructions[role] + " reference_index가 허용된 기존 문서 참조의 정확한 목록이다. 문서·문단·기준 항목 ID는 index의 값을 그대로 복사하며 이름으로 추측하거나 문서 ID와 버전을 새로 만들지 않는다. target_document_ref는 제공된 분석·검토·수정 대상 문서의 참조다. 검토 시 대상 근거에는 이 값을 그대로 복사한다. self는 현재 분석/검토 대상, 창작/수정 단계에서는 새로 출력하는 문서만 뜻한다. 창작/수정 결과의 자체 근거는 새 passages에 실제로 있는 ID와 self를 사용한다. 기준 근거에는 self를 쓰지 않는다." + " 모든 항목과 관계는 실제 문단 근거를 가져야 한다. 관계 끝점은 현재 항목 ID 또는 기준 항목의 전체 ID(document_id:version:entity_id)만 사용한다. 글의 순서를 시간 순서라고 가정하지 않는다."
         system += " context.unresolved_issues와 protected_unresolved_issues는 원래 실행·검토 문서·근거 원문을 보존한 미해결 기록이다. 현재 문서의 확정 설정이나 현재 검토 쟁점으로 복사하지 않는다. 창작·수정 시 기록에 담긴 작가의 미결 선택을 임의로 확정하거나 해결했다고 주장하지 않는다. 실행 가능한 수정만 반영하면서 질문이 가리키는 선택지는 열어둔다. 검토 시 사용자 request를 함께 확인하고 현재 문서의 실제 근거만 평가한다. 과거 질문을 재검토에서 생략하거나 문서를 채택해도 해당 기록은 해결되지 않는다."
+        if role == "reviewer" and stage == "review_source":
+            system += " 현재는 기존 원문 검토 모드다. document는 생성 초안이 아닌 불변 원문이다. 원문을 재작성하거나 새로운 이야기·설정·사건을 만들지 말고 실제 문제 위치, 관련 설정 근거, 이유, 최소한의 수정 제안만 issues로 반환한다. 원문 안의 서로 충돌하는 두 주장은 internal_conflict로, 원문과 context의 origin=constraint 문서에 있는 보호 조건의 충돌은 conflict_candidate로 구분한다. context에 대상 원문과 동일한 참조가 있어도 별도 기준 문서로 간주하지 않는다. 같은 원문 문단 안에서 두 주장이 충돌하면 그 문단 근거를 한 번만 인용하고 reason에 서로 충돌하는 두 주장을 구체적으로 비교해 설명한다. 여러 문단에 걸친 모순은 관련 문단을 각각 한 번 인용한다. 같은 문단 근거를 중복해 두 개처럼 만들지 않는다. 실제 충돌이나 설명상 문제가 없으면 issues를 빈 목록으로 반환한다. 요청이 수정·재작성을 요구하더라도 이 단계는 검토 의견만 제공한다."
         response = await self.client.responses.create(
             model=self.models[role], input=[{"role": "system", "content": system},
             {"role": "user", "content": json.dumps({"stage": stage, **indexed_payload(payload)}, ensure_ascii=False)}],
@@ -104,6 +108,27 @@ class MockProvider:
                          dict(id="r2", source="e2", target="e3", type="constrained_by", label="제약을 받는다", condition="폭풍 중", basis="explicit", evidence=ev)]
             return {"title": "[모의] 폭풍 관측소", "passages": passages, "entities": entities, "relations": relations}, {"input_tokens": 0, "output_tokens": 0}
         doc = payload["document"]
+        if stage == "review_source":
+            # This public fixture only recognizes its explicit demonstration pair.
+            # Arbitrary manuscripts must never receive invented mock findings.
+            examples = [
+                ("폭풍 중에는 송신할 수 없다.", "리나는 폭풍이 계속되는 동안 송신했다.",
+                 "공개 모의 예시의 폭풍 중 송신 금지 규칙과 폭풍 중 송신 사건이 충돌합니다.",
+                 "송신 시점을 폭풍 뒤로 바꾸거나 예외 규칙을 해당 문단에 설명해주세요."),
+                ("청동 열쇠는 세상에 하나뿐이다. 정오에 지민은 그 열쇠를 혼자 주머니에 넣은 채 탑 꼭대기에 있었다.",
+                 "같은 날 정오에 수아는 같은 청동 열쇠를 혼자 주머니에 넣은 채 지하 창고에 있었다. 탑과 창고 사이에는 이동이나 복제 장치가 없다.",
+                 "공개 모의 예시에서 하나뿐인 같은 열쇠를 같은 시각에 서로 다른 장소의 두 사람이 각각 소지합니다.",
+                 "두 장면의 시각이나 열쇠의 동일성을 해당 문단에서 정리해주세요.")]
+            issues = []
+            for first, second, reason, suggestion in examples:
+                rule = next((p for p in doc["passages"] if p["text"] == first), None)
+                action = next((p for p in doc["passages"] if p["text"] == second), None)
+                if rule and action and rule["id"] != action["id"]:
+                    issues.append({"id": "mock-source-conflict", "kind": "internal_conflict",
+                                   "reason": reason, "suggestion": suggestion,
+                                   "evidence": [{"document_ref": f'{doc["document_id"]}:{doc["version"]}', "passage_id": p["id"]} for p in (rule, action)], "status": "open"})
+                    break
+            return {"issues": issues}, {"input_tokens": 0, "output_tokens": 0}
         issues = [] if stage == "review_revision" else [{"id": "i1", "kind": "missing_explanation", "reason": "모의 예시에서 실제 송신 시점이 설명되지 않았습니다.", "suggestion": "폭풍이 멎은 뒤 송신했는지 명시해주세요.", "evidence": [{"document_ref": f'{doc["document_id"]}:{doc["version"]}', "passage_id": "p03"}], "status": "open"}]
         return {"issues": issues}, {"input_tokens": 0, "output_tokens": 0}
 

@@ -30,6 +30,14 @@ class Store:
         db.row_factory = sqlite3.Row
         return db
 
+    @staticmethod
+    def decode(kind, value):
+        obj = json.loads(value)
+        if kind == "run":
+            obj.setdefault("mode", "create")
+            obj.setdefault("review_document", None)
+        return obj
+
     def put(self, kind, id, value):
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO objects VALUES(?,?,?)", (kind, id, json.dumps(value, ensure_ascii=False)))
@@ -37,12 +45,12 @@ class Store:
     def get(self, kind, id):
         with self.connect() as db:
             row = db.execute("SELECT value FROM objects WHERE kind=? AND id=?", (kind, id)).fetchone()
-        return json.loads(row[0]) if row else None
+        return self.decode(kind, row[0]) if row else None
 
     def all(self, kind):
         with self.connect() as db:
             rows = db.execute("SELECT value FROM objects WHERE kind=? ORDER BY rowid DESC", (kind,)).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [self.decode(kind, row[0]) for row in rows]
 
     def request(self, id):
         with self.connect() as db:

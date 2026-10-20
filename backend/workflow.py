@@ -46,10 +46,13 @@ def build_workflow(store, provider):
 
     async def inspect(state):
         run = state["run"]
-        doc = run["revision"] or run["draft"]
-        stage = "review_revision" if run["revision"] else "review"
+        source_review = run.get("mode") == "review"
+        doc = run["review_document"] if source_review else run["revision"] or run["draft"]
+        stage = "review_source" if source_review else "review_revision" if run["revision"] else "review"
         save(run, stage, "본문 근거를 검토합니다")
-        raw = await call_provider(provider, "reviewer", stage, {"context": review_context(run), "request": run["request"], "document": doc}, run["usage"], run["trace"])
+        if source_review:
+            await verify_context(run)
+        raw = await call_provider(provider, "reviewer", stage, {"context": review_context(run), "request": run["request"], "document": doc, "mode": run.get("mode", "create")}, run["usage"], run["trace"])
         reviewed = review(raw, doc, run["context"]["documents"])
         run["reviews"].append(reviewed)
         run["pending_issues"] = merge_pending_issues(run.get("pending_issues", []), issue_records(run, reviewed, {"intent_question"}))
@@ -67,7 +70,7 @@ def build_workflow(store, provider):
 
     async def route(state):
         run = state["run"]
-        choice = "revise" if not run["revision"] and any(i["status"] == "open" and i["kind"] != "intent_question" for i in run["reviews"][-1]["issues"]) else "finish"
+        choice = "revise" if run.get("mode", "create") != "review" and not run["revision"] and any(i["status"] == "open" and i["kind"] != "intent_question" for i in run["reviews"][-1]["issues"]) else "finish"
         if run["trace"]:
             await trace_span(run["usage"], "branch", {"next_stage": choice, "revision_used": bool(run["revision"])})
         return choice
@@ -85,7 +88,7 @@ def build_workflow(store, provider):
     graph.add_node("review", inspect)
     graph.add_node("revise", revise)
     graph.add_node("finish", finish)
-    graph.add_edge(START, "generate")
+    graph.add_conditional_edges(START, lambda state: "review" if state["run"].get("mode") == "review" else "generate", {"review": "review", "generate": "generate"})
     graph.add_edge("generate", "review")
     graph.add_conditional_edges("review", route, {"revise": "revise", "finish": "finish"})
     graph.add_edge("revise", "review")

@@ -17,7 +17,7 @@ def passage_map(documents):
 
 def issue_records(run, reviewed, kinds=None):
     """Keep original review provenance without making rejected text canonical."""
-    documents = [*run["context"]["documents"], *[run[key] for key in ("draft", "revision") if run.get(key)]]
+    documents = [*run["context"]["documents"], *[run[key] for key in ("draft", "revision", "review_document") if run.get(key)]]
     mapping = passage_map(documents)
     records = []
     for issue in reviewed["issues"]:
@@ -124,19 +124,28 @@ def review(raw, doc, context):
         issue["status"] = "open"
         issue["evidence"] = valid_evidence(issue["evidence"], doc, context)
         locations = {(e["document_ref"], e["passage_id"]) for e in issue["evidence"]}
+        if doc["kind"] == "input" and not any(r == ref(doc) for r, _ in locations):
+            raise ValueError("원문 검토 쟁점에는 대상 원문의 문단 근거가 필요합니다")
         if issue["kind"] == "conflict_candidate":
             if not any(r == ref(doc) for r, _ in locations) or not any(r != ref(doc) for r, _ in locations):
-                raise ValueError("충돌 후보에는 기준과 초안의 근거가 필요합니다")
-        if issue["kind"] == "internal_conflict" and len({p for r, p in locations if r == ref(doc)}) < 2:
-            raise ValueError("내부 모순에는 초안 문단 두 곳이 필요합니다")
+                target = "원문" if doc["kind"] == "input" else "초안"
+                raise ValueError(f"충돌 후보에는 기준과 {target}의 근거가 필요합니다")
+        if issue["kind"] == "internal_conflict":
+            if doc["kind"] == "input":
+                # Two conflicting claims may share one original paragraph. Repeated
+                # references do not add evidence and are still rejected.
+                if len(issue["evidence"]) != len(locations):
+                    raise ValueError("원문 내부 모순의 같은 문단 근거를 중복할 수 없습니다")
+            elif len({p for r, p in locations if r == ref(doc)}) < 2:
+                raise ValueError("내부 모순에는 대상 문단 두 곳이 필요합니다")
     return {"document_ref": ref(doc), **output}
 
 
 def graph(run, view):
-    selected = run[view]
+    selected = run.get("review_document") if run.get("mode") == "review" and view in ("draft", "input") else run.get(view)
     if not selected:
         raise ValueError("해당 문서가 아직 없습니다")
-    documents = [*run["context"]["documents"], selected]
+    documents = list({ref(doc): doc for doc in [*run["context"]["documents"], selected]}.values())
     issues = [i for r in run["reviews"] if r["document_ref"] == ref(selected) for i in r["issues"]]
     nodes, edges, warnings = [], [], []
     for doc in documents:
@@ -156,7 +165,8 @@ def graph(run, view):
 
 
 def export_markdown(run):
-    doc = run["revision"] or run["draft"]
+    source_review = run.get("mode") == "review"
+    doc = run.get("review_document") if source_review else run["revision"] or run["draft"]
     if not doc:
         raise ValueError("내보낼 문서가 없습니다")
     context = run["context"]["documents"]
@@ -183,8 +193,8 @@ def export_markdown(run):
         source_doc = next(d for d in context if ref(d) == dref)
         item = next(e for e in source_doc["entities"] if e["id"] == eid)
         return f'{escape(item["name"])} ({", ".join(link(e) for e in item["evidence"])})'
-    lines = [f'# {escape(doc["title"])}', "", f'문서: {ref(doc)} · {doc["kind"]} · {doc["decision"]}',
-             f'기준 버전: {doc["context_version"]}', f'제공자: {run["provider"]}', f'실행 상태: {run.get("status", "unknown")}', ""]
+    lines = [f'# {escape(doc["title"])}' + (" — 원문 검토 보고서" if source_review else ""), "", f'문서: {ref(doc)} · {doc["kind"]} · {doc["decision"]}',
+             f'기준 버전: {run["context"]["version"] if source_review else doc["context_version"]}', f'제공자: {run["provider"]}', f'실행 상태: {run.get("status", "unknown")}', ""]
     for p in doc["passages"]:
         lines += [f'## passage-{p["id"]}', "", p["text"].replace("<", "&lt;").replace(">", "&gt;"), ""]
     for item in doc["entities"]:
@@ -196,6 +206,8 @@ def export_markdown(run):
     lines += ["", "## 검토 결과", ""]
     for r in run["reviews"]:
         lines += [f'### 문서 {r["document_ref"]}', ""]
+        if source_review and not r["issues"]:
+            lines += ["이번 검토에서 근거를 갖춘 쟁점을 찾지 못했습니다. 무오류를 보장하는 판정은 아닙니다.", ""]
         for i in r["issues"]:
             # Previous-draft evidence is an appendix, never a dangling current-body anchor.
             lines += [f'- {escape(i["kind"])} · {i["status"]}: {escape(i["reason"])}', f'  제안: {escape(i["suggestion"])}']
@@ -217,7 +229,8 @@ def export_markdown(run):
             for snapshot in record["evidence_snapshots"]:
                 lines += [f'원래 근거: {escape(snapshot["document_ref"])} / {escape(snapshot["passage_id"])}',
                           "", escape(snapshot["text"]), ""]
-    lines += ["", f'결정: {run["decision"]["status"]} — {escape(run["decision"]["reason"])}', ""]
+    if not source_review:
+        lines += ["", f'결정: {run["decision"]["status"]} — {escape(run["decision"]["reason"])}', ""]
     for (dref, pid), n in external.items():
         lines += [f'## evidence-{n}', "", f'{dref} / {pid}', "", escape(mapping[(dref, pid)]), ""]
     result = "\n".join(lines)

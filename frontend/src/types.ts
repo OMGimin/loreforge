@@ -82,6 +82,8 @@ export interface PendingIssue {
   evidence_snapshots: (Evidence & { text: string })[]
 }
 export interface Run {
+  mode?: 'create' | 'review'
+  review_document?: StoryDocument | null
   id: string
   source_id: string
   analysis_id: string | null
@@ -131,7 +133,7 @@ export const statusLabel: Record<string, string> = {
 }
 export const basisLabel = (value: string) => value === 'explicit' ? '문서에 명시' : value === 'inferred' ? 'AI 추론' : value
 export const issueLabel: Record<string, string> = {
-  conflict_candidate: '기준과 충돌 후보', internal_conflict: '초안 내부 모순',
+  conflict_candidate: '기준과 충돌 후보', internal_conflict: '문서 내부 모순',
   missing_explanation: '설명 부족', intent_question: '의도 확인 질문',
 }
 
@@ -155,6 +157,22 @@ export function graphForDocument(graph: GraphResponse, currentRef?: string, incl
   return { ...graph, nodes: graph.nodes.filter(item => ids.has(item.data.id)), edges }
 }
 
+// Only translate IDs backed by this finding's exact evidence. Saved model text stays intact.
+export function readableIssueText(text: string, issue: Pick<Issue, 'evidence'>, documents: StoryDocument[]): string {
+  const labels = new Map<string, Set<string>>()
+  for (const evidence of issue.evidence) {
+    const doc = documents.find(doc => documentRef(doc) === evidence.document_ref)
+    if (!doc?.passages.some(p => p.id === evidence.passage_id)) continue
+    const values = labels.get(evidence.passage_id) || new Set<string>()
+    values.add(evidenceLabel(doc, evidence.passage_id))
+    labels.set(evidence.passage_id, values)
+  }
+  return text.replace(/([A-Za-z_][A-Za-z0-9_-]*)(은|는|이|가|을|를|와|과)?/g, (original, id: string, particle: string | undefined) => {
+    if (!labels.has(id)) return original
+    const ending: Record<string, string> = { 은: '은', 는: '은', 이: '이', 가: '이', 을: '을', 를: '을', 와: '과', 과: '과' }
+    return [...labels.get(id)!].join(' / ') + (particle ? ending[particle] : '')
+  })
+}
 
 export const graphCacheKey = (run: Pick<Run, 'id' | 'status' | 'reviews' | 'decision'>, view: DocumentView) =>
   `${run.id}:${view}:${run.decision.status}:${run.status}:${run.reviews.length}`

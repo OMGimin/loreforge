@@ -70,7 +70,8 @@ def create_app(db_path=None, provider=None):
     def existing_request(request_id, kind, value):
         saved = store.request(request_id)
         if saved:
-            if saved["kind"] != kind or saved["fingerprint"] != fingerprint(value):
+            legacy_create = kind == "run" and value.get("mode") == "create" and saved["fingerprint"] == fingerprint({k: v for k, v in value.items() if k != "mode"})
+            if saved["kind"] != kind or (saved["fingerprint"] != fingerprint(value) and not legacy_create):
                 raise HTTPException(409, "같은 request_id가 다른 요청에 사용되었습니다")
             return required(kind, saved["target"])
         return None
@@ -153,7 +154,7 @@ def create_app(db_path=None, provider=None):
         try:
             async with asyncio.timeout(600):
                 if run["trace"]:
-                    run["usage"]["trace_id"] = await trace_start("job", {"provider": provider.name, "operation": "generation", "analysis_reused": bool(run["analysis_id"])})
+                    run["usage"]["trace_id"] = await trace_start("job", {"provider": provider.name, "operation": "review" if run.get("mode") == "review" else "generation", "analysis_reused": bool(run["analysis_id"])})
                     if not run["usage"]["trace_id"]:
                         run["warnings"].append("LangSmith 추적 미설정 또는 연결 실패")
                 else:
@@ -189,7 +190,7 @@ def create_app(db_path=None, provider=None):
             if run["status"] in ("failed", "interrupted"):
                 store.event(run, run["error"])
             else:
-                store.event(run, "미해결 쟁점이 남아 있습니다" if run["status"] == "needs_attention" else "생성과 검토가 끝났습니다")
+                store.event(run, "미해결 쟁점이 남아 있습니다" if run["status"] == "needs_attention" else "원문 검토가 끝났습니다" if run.get("mode") == "review" else "생성과 검토가 끝났습니다")
             gate.release()
 
     @app.post("/api/runs", status_code=202)
@@ -207,7 +208,7 @@ def create_app(db_path=None, provider=None):
             if analysis["consumed_by"]:
                 # Repeated UI submission cannot charge for the same analysis twice.
                 prior_run = required("run", analysis["consumed_by"])
-                if prior_run["constraints_input"] != body.constraints or prior_run["request_input"] != body.request or prior_run["trace"] != body.trace:
+                if prior_run.get("mode", "create") != body.mode or prior_run["constraints_input"] != body.constraints or prior_run["request_input"] != body.request or prior_run["trace"] != body.trace:
                     raise HTTPException(409, "이 분석은 이미 다른 조건의 작업에 사용되었습니다. 새로 분석해주세요.")
                 store.claim(body.request_id, "run", prior_run["id"], fingerprint(params))
                 return prior_run
@@ -217,6 +218,8 @@ def create_app(db_path=None, provider=None):
             stats = copy.deepcopy(analysis["usage"])
         else:
             previous_run = required("run", body.accepted_run_id)
+            if previous_run.get("mode", "create") == "review":
+                raise HTTPException(409, "원문 검토 결과는 채택하거나 이어쓸 수 없습니다. 원문을 새로 분석해 생성해주세요")
             if previous_run["decision"]["status"] != "accepted" or previous_run["status"] not in ("completed", "needs_attention"):
                 raise HTTPException(409, "채택한 최종 결과만 이어쓸 수 있습니다")
             source_id = previous_run["source_id"]
@@ -240,10 +243,11 @@ def create_app(db_path=None, provider=None):
                 context["documents"] = list(docs)
                 condition_doc["origin"] = "constraint"
                 context["documents"].append(condition_doc)
-            default = "채택한 설정을 지키며 다음 사건 하나를 구체화해줘" if body.accepted_run_id else "이 재료로 세계 규칙·인물·갈등의 첫 설정 초안을 만들어줘"
-            run = {"id": new_id("run"), "source_id": source_id, "analysis_id": body.analysis_id,
+            default = "원문의 내부 모순과 보호 조건 충돌을 근거와 함께 검토하고 수정 의견만 제시해줘" if body.mode == "review" else "채택한 설정을 지키며 다음 사건 하나를 구체화해줘" if body.accepted_run_id else "이 재료로 세계 규칙·인물·갈등의 첫 설정 초안을 만들어줘"
+            run = {"id": new_id("run"), "source_id": source_id, "analysis_id": body.analysis_id, "mode": body.mode,
                    "accepted_run_id": body.accepted_run_id, "continuation_document_ref": ref(final) if body.accepted_run_id else None, "status": "running", "stage": "queued", "request": body.request.strip() or default,
                    "request_input": body.request, "constraints_input": body.constraints, "context": context, "draft": None, "revision": None,
+                   "review_document": copy.deepcopy(analysis["document"]) if body.mode == "review" else None,
                    "reviews": [], "pending_issues": copy.deepcopy(pending), "decision": {"status": "pending", "reason": ""}, "usage": stats, "error": None,
                    "warnings": ["명시적 모의 제공자: 고정된 공개 가상 예시이며 실제 AI 생성·토큰 사용 결과가 아닙니다."] if provider.name == "mock" else [],
                    "created_at": now(), "prompt_version": PROMPT_VERSION, "trace": body.trace, "provider": provider.name, "models": provider.models}
@@ -294,8 +298,8 @@ def create_app(db_path=None, provider=None):
 
     @app.get("/api/runs/{run_id}/graph")
     async def read_graph(run_id: str, view: str = "draft"):
-        if view not in ("draft", "revision"):
-            raise HTTPException(422, "view는 draft 또는 revision이어야 합니다")
+        if view not in ("draft", "revision", "input"):
+            raise HTTPException(422, "view는 draft, revision 또는 input이어야 합니다")
         try:
             return graph(required("run", run_id), view)
         except ValueError as exc:
@@ -304,6 +308,8 @@ def create_app(db_path=None, provider=None):
     @app.post("/api/runs/{run_id}/decision")
     async def decide(run_id: str, body: DecisionInput):
         run = required("run", run_id)
+        if run.get("mode", "create") == "review":
+            raise HTTPException(409, "원문 검토는 수정 의견만 제공합니다. 채택·보류할 생성 문서가 없습니다")
         if run["status"] not in ("completed", "needs_attention") or not run["reviews"]:
             raise HTTPException(409, "검토가 끝난 최종 결과에만 결정할 수 있습니다")
         run["decision"] = body.model_dump()
