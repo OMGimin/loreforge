@@ -134,3 +134,14 @@ export const issueLabel: Record<string, string> = {
   conflict_candidate: '기준과 충돌 후보', internal_conflict: '초안 내부 모순',
   missing_explanation: '설명 부족', intent_question: '의도 확인 질문',
 }
+
+// Display positions are version-specific; canonical IDs remain unchanged for evidence links.
+export function passageLabel(doc: Pick<StoryDocument, 'passages'>, id: string): string {
+  const index = doc.passages.findIndex(passage => passage.id === id)
+  return index < 0 ? '찾을 수 없는 문단' : `${index + 1}번 문단`
+}
+export function evidenceLabel(doc: Pick<StoryDocument, 'kind' | 'passages'> | undefined, id: string): string {
+  if (!doc) return '이전 문서의 근거'
+  const source = { input: '입력 원문', draft: '첫 초안', revision: '수정본' }[doc.kind] || '기준 문서'
+  return `${source} · ${passageLabel(doc, id)}`
+}

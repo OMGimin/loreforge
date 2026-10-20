@@ -8,7 +8,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "browser:check": "node ../scripts/verify_browser.cjs",
     "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "cytoscape": "^3.33.1",

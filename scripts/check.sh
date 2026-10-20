@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 .venv/bin/python -m pytest -q
+npm --prefix frontend test
 npm --prefix frontend run build
 if [[ -e .git ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git diff --check
