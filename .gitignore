@@ -27,3 +27,6 @@ __pycache__/
 htmlcov/
 node_modules/
 dist/
+*.egg-info/
+frontend/test-results/
+frontend/playwright-report/
