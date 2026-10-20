@@ -224,7 +224,7 @@ async def test_actual_openai_review_source_prompt_and_payload_offline(monkeypatc
     class Responses:
         async def create(self, **kwargs):
             captured.append(kwargs)
-            return SimpleNamespace(status='completed', output_text='{"issues":[]}', model='offline-model', usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+            return SimpleNamespace(status='completed', output_text='{"candidates":[]}', model='offline-model', usage=SimpleNamespace(input_tokens=1, output_tokens=1))
     provider = OpenAIProvider()
     provider.client = SimpleNamespace(responses=Responses())
     document = dict(document_id='source-test', version=1, passages=[dict(id='p001', text='공개 가상 원문')], entities=[])
@@ -236,7 +236,7 @@ async def test_actual_openai_review_source_prompt_and_payload_offline(monkeypatc
     assert body['target_document_ref'] == 'source-test:1'
     assert len(body['reference_index']) == 1
     system = captured[0]['input'][0]['content']
-    assert '불변 원문' in system and 'issues를 빈 목록' in system
+    assert '불변 원문' in system and 'candidates를 빈 목록' in system
     assert 'internal_conflict' in system and 'origin=constraint' in system
     assert '원문을 재작성하거나 새로운 이야기' in system
     assert '그 문단 근거를 한 번만 인용' in system

@@ -87,6 +87,7 @@ const currentIssues = computed(() => {
   if (!run.value || (!reviewOnly.value && currentView.value === 'input') || !selectedDocument.value) return []
   return run.value.reviews.filter(review => review.document_ref === documentRef(selectedDocument.value!)).flatMap(review => review.issues)
 })
+const dismissedCandidates = computed(() => run.value?.reviews.filter(r => selectedDocument.value && r.document_ref === documentRef(selectedDocument.value)).flatMap(r => r.screening || []).filter(c => c.verdict !== 'unresolved') || [])
 const finalDocument = computed(() => run.value?.revision || run.value?.draft || null)
 const finalView = computed(() => finalDocument.value && selectedDocument.value && documentRef(finalDocument.value) === documentRef(selectedDocument.value))
 const decisionAllowed = computed(() => Boolean(run.value && ['completed', 'needs_attention'].includes(run.value.status) && run.value.reviews.length && finalDocument.value))
@@ -589,6 +590,15 @@ onBeforeUnmount(stopWatching)
               <h4>수정 선택지</h4><p>{{ readableIssueText(issue.suggestion, issue, allDocuments) }}</p>
               <button class="text-button" @click="selectedIssue = issue; mode = 'graph'">관련 설정을 관계도에서 보기 ↗</button>
             </article>
+            <details v-if="dismissedCandidates.length" class="review-screening">
+              <summary>검토에서 제외한 지적 후보 {{ dismissedCandidates.length }}건</summary>
+              <p class="field-hint">이미 설명된 내용이나 선택적 상세화는 문제 목록에서 제외했습니다. 제외 판단도 원문 근거와 함께 확인할 수 있습니다.</p>
+              <article v-for="candidate in dismissedCandidates" :key="candidate.issue.id">
+                <h4>{{ candidate.verdict === 'explained' ? '원문 설명으로 해소됨' : '선택적으로 구체화할 내용' }}</h4>
+                <p>{{ readableIssueText(candidate.rationale, { evidence: [...candidate.issue.evidence, ...candidate.counter_evidence] }, allDocuments) }}</p>
+                <button v-for="(evidence, i) in candidate.counter_evidence" :key="i" class="evidence-card" @click="jumpEvidence(evidence)"><span>{{ evidenceLabel(findEvidence(evidence).doc, evidence.passage_id) }} 보기 ↗</span><p>{{ findEvidence(evidence).passage?.text }}</p></button>
+              </article>
+            </details>
             <button v-if="run && !running && run.reviews.length" class="export-button" @click="exportDocument">검토 보고서 Markdown 내보내기</button>
           </section>
           <template v-else-if="mode === 'graph'">

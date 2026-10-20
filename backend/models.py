@@ -68,6 +68,15 @@ class Issue(Strict):
 class ReviewOutput(Strict):
     issues: list[Issue]
 
+class ReviewCandidate(Strict):
+    issue: Issue
+    verdict: Literal["unresolved", "explained", "optional"]
+    counter_evidence: list[Evidence]
+    rationale: str = Field(min_length=1)
+
+class ScreenedReviewOutput(Strict):
+    candidates: list[ReviewCandidate] = Field(max_length=12)
+
 # Concrete schema types for Structured Outputs. Graph validation remains separate
 # when a provider/custom fixture supplies a malformed graph fragment.
 class StructuredStory(StoryOutput):

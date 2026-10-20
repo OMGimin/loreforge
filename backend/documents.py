@@ -3,7 +3,7 @@ import copy
 import re
 from collections import Counter
 from pydantic import ValidationError
-from .models import Entity, Relation, StoryOutput, AnalysisOutput, ReviewOutput
+from .models import Entity, Relation, StoryOutput, AnalysisOutput, ReviewOutput, ScreenedReviewOutput
 from .store import new_id
 
 
@@ -115,6 +115,20 @@ def analyze_document(source, raw):
 
 
 def review(raw, doc, context):
+    screening = None
+    if "candidates" in raw:
+        screening = ScreenedReviewOutput.model_validate(raw).model_dump()["candidates"]
+        seen = set()
+        for candidate in screening:
+            issue = candidate["issue"]
+            if issue["id"] in seen:
+                raise ValueError("검토 후보 ID가 중복됩니다")
+            seen.add(issue["id"])
+            issue["evidence"] = valid_evidence(issue["evidence"], doc, context)
+            candidate["counter_evidence"] = valid_evidence(candidate["counter_evidence"], doc, context, allow_empty=True)
+            if candidate["verdict"] == "explained" and not candidate["counter_evidence"]:
+                raise ValueError("이미 설명된 후보에는 실제 해소 근거가 필요합니다")
+        raw = {"issues": [c["issue"] for c in screening if c["verdict"] == "unresolved"]}
     output = ReviewOutput.model_validate(raw).model_dump()
     ids = set()
     for issue in output["issues"]:
@@ -138,7 +152,7 @@ def review(raw, doc, context):
                     raise ValueError("원문 내부 모순의 같은 문단 근거를 중복할 수 없습니다")
             elif len({p for r, p in locations if r == ref(doc)}) < 2:
                 raise ValueError("내부 모순에는 대상 문단 두 곳이 필요합니다")
-    return {"document_ref": ref(doc), **output}
+    return {"document_ref": ref(doc), **output, **({"screening": screening} if screening is not None else {})}
 
 
 def graph(run, view):
@@ -215,6 +229,17 @@ def export_markdown(run):
                 if (e["document_ref"], e["passage_id"]) not in mapping and run["draft"] and e["document_ref"] == ref(run["draft"]):
                     mapping[(e["document_ref"], e["passage_id"])] = next(p["text"] for p in run["draft"]["passages"] if p["id"] == e["passage_id"])
             lines.append("  근거: " + ", ".join(link(e) for e in i["evidence"]))
+        dismissed = [c for c in r.get("screening", []) if c["verdict"] != "unresolved"]
+        if dismissed:
+            lines += ["", "#### 문제 목록에서 제외한 후보", ""]
+        for candidate in dismissed:
+            verdict = "원문 설명으로 해소됨" if candidate["verdict"] == "explained" else "선택적 상세화"
+            lines += [f'- {verdict}: {escape(candidate["rationale"])}']
+            for e in candidate["counter_evidence"]:
+                if (e["document_ref"], e["passage_id"]) not in mapping and run.get("draft") and e["document_ref"] == ref(run["draft"]):
+                    mapping[(e["document_ref"], e["passage_id"])] = next(p["text"] for p in run["draft"]["passages"] if p["id"] == e["passage_id"])
+            if candidate["counter_evidence"]:
+                lines.append("  해소 근거: " + ", ".join(link(e) for e in candidate["counter_evidence"]))
     pending = merge_pending_issues(run.get("pending_issues", []), run["context"].get("unresolved_issues", []))
     shown = {(r["document_ref"], i["id"]) for r in run["reviews"] for i in r["issues"]}
     pending = [record for record in pending if (record["document_ref"], record["issue"]["id"]) not in shown]

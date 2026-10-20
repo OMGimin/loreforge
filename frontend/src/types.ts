@@ -74,7 +74,8 @@ export interface Issue {
   evidence: Evidence[]
   status: string
 }
-export interface Review { document_ref: string; issues: Issue[] }
+export interface ReviewCandidate { issue: Issue; verdict: 'unresolved' | 'explained' | 'optional'; counter_evidence: Evidence[]; rationale: string }
+export interface Review { document_ref: string; issues: Issue[]; screening?: ReviewCandidate[] }
 export interface PendingIssue {
   origin_run_id: string
   document_ref: string

@@ -357,7 +357,7 @@ async def test_openai_payload_contains_exact_reference_index_and_target(monkeypa
     class Responses:
         async def create(self, **kwargs):
             captured.append(kwargs)
-            return SimpleNamespace(status='completed', output_text='{"issues":[]}', model='actual-model-snapshot', usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+            return SimpleNamespace(status='completed', output_text='{"candidates":[]}', model='actual-model-snapshot', usage=SimpleNamespace(input_tokens=1, output_tokens=1))
     provider.client = SimpleNamespace(responses=Responses())
     payload = {'context': {'version': 'ctx', 'documents': [baseline, target], 'constraints': []}, 'document': target}
     stats = usage()
