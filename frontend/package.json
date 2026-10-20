@@ -1,0 +1,25 @@
+{
+  "name": "loreforge-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "browser:check": "node ../scripts/verify_browser.cjs",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "cytoscape": "^3.33.1",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@types/cytoscape": "^3.21.9",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "playwright": "^1.62.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.10",
+    "vue-tsc": "^3.1.1"
+  }
+}
