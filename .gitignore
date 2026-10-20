@@ -1,0 +1,29 @@
+# Local credentials; only intentionally authored examples may be tracked.
+.env
+.env.*
+!.env.example
+
+# Original manuscripts, private case notes, prompts/results, and local state.
+/local/
+/runtime/
+/exports/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# Development artifacts.
+.DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
