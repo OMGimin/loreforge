@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api, recall, remember, requestId } from './api'
 import type { Analysis, DocumentView, Evidence, GraphData, GraphResponse, Health, Issue, Run, Source, StoryDocument } from './types'
-import { basisLabel, documentRef, evidenceLabel, issueLabel, kindLabel, passageLabel, statusLabel } from './types'
+import { basisLabel, documentRef, evidenceLabel, graphCacheKey, issueLabel, kindLabel, passageLabel, statusLabel } from './types'
 
 const RelationshipGraph = defineAsyncComponent(() => import('./components/RelationshipGraph.vue'))
 
@@ -240,7 +240,7 @@ async function loadGraph() {
     return
   }
   if (!run.value || !selectedDocument.value) { graph.value = { nodes: [], edges: [], warnings: [] }; return }
-  const key = `${run.value.id}:${currentView.value}:${run.value.decision.status}`
+  const key = graphCacheKey(run.value, currentView.value)
   if (graphCache.has(key)) { graph.value = graphCache.get(key)!; graphLoading.value = false; return }
   graphLoading.value = true
   try {
@@ -552,7 +552,7 @@ onBeforeUnmount(stopWatching)
             <div v-if="graphLoading" class="center-loading"><span class="spinner" />저장된 관계를 불러오는 중</div>
             <div v-else-if="graphError" class="empty-state compact"><span>◇</span><h2>그래프를 불러오지 못했어요</h2><p>{{ graphError }}</p><button @click="loadGraph">다시 불러오기</button></div>
             <div v-else-if="!selectedDocument" class="empty-state compact"><span>◇</span><h2>{{ running ? '관계도를 준비하고 있어요' : '재료를 정리하면 관계를 볼 수 있어요' }}</h2><p>{{ running ? '초안이 저장되면 인물과 관계를 이곳에서 살펴볼 수 있습니다.' : continuing ? '이야기 이어가기를 실행하면 새 초안의 관계를 살펴볼 수 있습니다.' : '키워드나 메모를 입력하고 「재료 정리하기」를 눌러주세요.' }}</p><button v-if="!run && !continuing" @click="focusPanel('materials', 'source-text')">재료 입력으로 이동 →</button></div>
-            <RelationshipGraph v-else :graph="graph" :issue-id="selectedIssue?.id" :issue-evidence="selectedIssue?.evidence" @select="chooseItem" />
+            <RelationshipGraph v-else :graph="graph" :current-document-ref="selectedDocument ? documentRef(selectedDocument) : undefined" :issue-id="selectedIssue?.id" :issue-evidence="selectedIssue?.evidence" @select="chooseItem" />
           </template>
           <template v-else-if="bodyDocument">
             <div v-if="evidenceDocument" class="evidence-jump-banner"><span>근거 문서 · {{ bodyDocument.kind === 'input' ? '입력 자료' : bodyDocument.decision === 'accepted' ? '채택한 설정' : bodyDocument.kind === 'revision' ? '수정본' : '초안' }}</span><button class="text-button" @click="evidenceDocument = null; highlightedPassage = ''">선택 버전으로 돌아가기 ↩</button></div>

@@ -98,8 +98,9 @@ fs.mkdirSync(output, { recursive: true });
 
     // Exercise display limits with a browser-only fixture. Stored data is untouched.
     const graphUrl = `**/api/runs/${secondId}/graph?view=*`;
-    const nodes = Array.from({ length: 35 }, (_, i) => ({ data: { id: `large:${i}`, label: `인물${i}`, type: 'person', status: 'pending', basis: 'explicit', document_ref: 'large:1', evidence: [], issue_ids: [] } }));
-    const edges = Array.from({ length: 65 }, (_, i) => ({ data: { id: `edge:${i}`, source: `large:${i % 30}`, target: `large:${(i + 1) % 30}`, label: '연결', type: 'related_to', status: 'pending', basis: 'explicit', document_ref: 'large:1', evidence: [], issue_ids: [] } }));
+    const largeRef = `${continued.revision.document_id}:${continued.revision.version}`;
+    const nodes = Array.from({ length: 35 }, (_, i) => ({ data: { id: `large:${i}`, label: `인물${i}`, type: 'person', status: 'pending', basis: 'explicit', document_ref: largeRef, evidence: [], issue_ids: [] } }));
+    const edges = Array.from({ length: 65 }, (_, i) => ({ data: { id: `edge:${i}`, source: `large:${i % 30}`, target: `large:${(i + 1) % 30}`, label: '연결', type: 'related_to', status: 'pending', basis: 'explicit', document_ref: largeRef, evidence: [], issue_ids: [] } }));
     await page.route(graphUrl, route => route.fulfill({ json: { nodes, edges, warnings: ['검증용 부분 표시 경고'] } }));
     await page.reload();
     await page.getByRole('button', { name: '수정본', exact: true }).waitFor();

@@ -145,3 +145,16 @@ export function evidenceLabel(doc: Pick<StoryDocument, 'kind' | 'passages'> | un
   const source = { input: '입력 원문', draft: '첫 초안', revision: '수정본' }[doc.kind] || '기준 문서'
   return `${source} · ${passageLabel(doc, id)}`
 }
+
+export function graphForDocument(graph: GraphResponse, currentRef?: string, includeContext = false): GraphResponse {
+  if (!currentRef || includeContext) return graph
+  const edges = graph.edges.filter(item => item.data.document_ref === currentRef)
+  const ids = new Set(graph.nodes.filter(item => item.data.document_ref === currentRef).map(item => item.data.id))
+  // Referenced baseline endpoints are necessary to understand a current relationship.
+  edges.forEach(({ data }) => { if (data.source) ids.add(data.source); if (data.target) ids.add(data.target) })
+  return { ...graph, nodes: graph.nodes.filter(item => ids.has(item.data.id)), edges }
+}
+
+
+export const graphCacheKey = (run: Pick<Run, 'id' | 'status' | 'reviews' | 'decision'>, view: DocumentView) =>
+  `${run.id}:${view}:${run.decision.status}:${run.status}:${run.reviews.length}`
