@@ -1,7 +1,7 @@
 import asyncio
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from .documents import document, review, ref, passage_map
+from .documents import document, review, ref, passage_map, issue_records, merge_pending_issues
 from .provider import call_provider
 from .mcp_client import get_passages
 from .tracing import trace_span
@@ -11,6 +11,10 @@ class State(TypedDict):
 
 
 def build_workflow(store, provider):
+    def review_context(run):
+        return {**run["context"], "unresolved_issues": merge_pending_issues(
+            run["context"].get("unresolved_issues", []), run.get("pending_issues", []))}
+
     def save(run, stage, message):
         run["stage"] = stage
         store.put("run", run["id"], run)
@@ -45,15 +49,17 @@ def build_workflow(store, provider):
         doc = run["revision"] or run["draft"]
         stage = "review_revision" if run["revision"] else "review"
         save(run, stage, "본문 근거를 검토합니다")
-        raw = await call_provider(provider, "reviewer", stage, {"context": run["context"], "document": doc}, run["usage"], run["trace"])
-        run["reviews"].append(review(raw, doc, run["context"]["documents"]))
+        raw = await call_provider(provider, "reviewer", stage, {"context": review_context(run), "request": run["request"], "document": doc}, run["usage"], run["trace"])
+        reviewed = review(raw, doc, run["context"]["documents"])
+        run["reviews"].append(reviewed)
+        run["pending_issues"] = merge_pending_issues(run.get("pending_issues", []), issue_records(run, reviewed, {"intent_question"}))
         save(run, "reviewed", "검토 결과를 저장했습니다")
         return {"run": run}
 
     async def revise(state):
         run = state["run"]
         save(run, "revise", "검토 의견을 반영해 한 번 수정합니다")
-        raw = await call_provider(provider, "writer", "revise", {"context": run["context"], "request": run["request"], "document": run["draft"], "review": {"document_ref": run["reviews"][-1]["document_ref"], "issues": [i for i in run["reviews"][-1]["issues"] if i["status"] == "open" and i["kind"] != "intent_question"]}}, run["usage"], run["trace"])
+        raw = await call_provider(provider, "writer", "revise", {"context": review_context(run), "request": run["request"], "document": run["draft"], "protected_unresolved_issues": run.get("pending_issues", []), "review": {"document_ref": run["reviews"][-1]["document_ref"], "issues": [i for i in run["reviews"][-1]["issues"] if i["status"] == "open" and i["kind"] != "intent_question"]}}, run["usage"], run["trace"])
         run["revision"] = document(raw, "revision", run["context"]["version"], run["context"]["documents"], parent=ref(run["draft"]), document_id=run["draft"]["document_id"], version=2)
         run["warnings"].extend(run["revision"]["warnings"])
         save(run, "revised", "수정본을 저장했습니다")
@@ -68,7 +74,7 @@ def build_workflow(store, provider):
 
     async def finish(state):
         run = state["run"]
-        run["status"] = "needs_attention" if any(i["status"] == "open" for i in run["reviews"][-1]["issues"]) else "completed"
+        run["status"] = "needs_attention" if run.get("pending_issues") or any(i["status"] == "open" for i in run["reviews"][-1]["issues"]) else "completed"
         # Publish terminal status only after optional trace cleanup in execute().
         # This prevents a late worker write from overwriting a user decision.
         run["stage"] = "finished"

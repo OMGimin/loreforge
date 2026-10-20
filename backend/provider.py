@@ -5,7 +5,7 @@ import os
 import time
 from .models import StructuredAnalysis, StructuredStory, ReviewOutput, StoryOutput, AnalysisOutput
 
-PROMPT_VERSION = "loreforge-v3-review-boundaries"
+PROMPT_VERSION = "loreforge-v4-pending-issues"
 
 MODELS = {"analyst": "gpt-5.4-mini", "writer": "gpt-5.4", "reviewer": "gpt-5.4"}
 
@@ -59,6 +59,7 @@ class OpenAIProvider:
             "reviewer": "설정 검토 담당이다. 기준과 대상의 충돌은 conflict_candidate, 내부 모순은 internal_conflict, 설명 부족은 missing_explanation, 창작 의도 확인은 intent_question으로 구분한다. 충돌 후보는 기준과 대상 양쪽 근거, 내부 모순은 대상의 서로 다른 두 문단 근거가 필요하다. 수정본 검토는 현재 수정본만 평가하며 과거 초안 쟁점을 복사하지 않는다. 실제 위치를 찾지 못하면 모순이라고 단정하지 않는다. 새 쟁점 상태는 open이다. 이 서비스는 창작을 위한 것이므로 기준에 없는 인물·관계·장소·사건을 새로 제안하는 것은 정상이다. 기준과 충돌하지 않는 신규 설정이라는 이유만으로 의도 확인 질문을 만들지 않는다. 사건 사이의 이동 과정·시간·행동 이유가 누락된 경우에는 missing_explanation으로 분류하고, 본문에 없는 이동 방향이나 의도를 사실처럼 추정하지 않는다. intent_question은 실제 기준이나 요청에서 서로 양립하기 어려운 창작 방향이 드러나 작가의 선택 없이는 검토를 진행할 수 있을 때에만 사용한다. 단순한 정보 부재나 통상적인 창작적 보충은 그 사유가 아니다."
         }
         system = common + instructions[role] + " reference_index가 허용된 기존 문서 참조의 정확한 목록이다. 문서·문단·기준 항목 ID는 index의 값을 그대로 복사하며 이름으로 추측하거나 문서 ID와 버전을 새로 만들지 않는다. target_document_ref는 제공된 분석·검토·수정 대상 문서의 참조다. 검토 시 대상 근거에는 이 값을 그대로 복사한다. self는 현재 분석/검토 대상, 창작/수정 단계에서는 새로 출력하는 문서만 뜻한다. 창작/수정 결과의 자체 근거는 새 passages에 실제로 있는 ID와 self를 사용한다. 기준 근거에는 self를 쓰지 않는다." + " 모든 항목과 관계는 실제 문단 근거를 가져야 한다. 관계 끝점은 현재 항목 ID 또는 기준 항목의 전체 ID(document_id:version:entity_id)만 사용한다. 글의 순서를 시간 순서라고 가정하지 않는다."
+        system += " context.unresolved_issues와 protected_unresolved_issues는 원래 실행·검토 문서·근거 원문을 보존한 미해결 기록이다. 현재 문서의 확정 설정이나 현재 검토 쟁점으로 복사하지 않는다. 창작·수정 시 기록에 담긴 작가의 미결 선택을 임의로 확정하거나 해결했다고 주장하지 않는다. 실행 가능한 수정만 반영하면서 질문이 가리키는 선택지는 열어둔다. 검토 시 사용자 request를 함께 확인하고 현재 문서의 실제 근거만 평가한다. 과거 질문을 재검토에서 생략하거나 문서를 채택해도 해당 기록은 해결되지 않는다."
         response = await self.client.responses.create(
             model=self.models[role], input=[{"role": "system", "content": system},
             {"role": "user", "content": json.dumps({"stage": stage, **indexed_payload(payload)}, ensure_ascii=False)}],

@@ -127,8 +127,49 @@ fs.mkdirSync(output, { recursive: true });
     await page.getByRole('button', { name: '재료 정리하기' }).click();
     await page.getByText('재료 정리 완료', { exact: false }).waitFor();
     assert.equal(await page.evaluate(() => window.evil), undefined, 'Raw document HTML executed');
+    // First-use navigation must work without spatial instructions on a narrow screen.
+    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const mobile = await mobileContext.newPage();
+    mobile.setDefaultTimeout(15000);
+    mobile.on('pageerror', err => errors.push(err.message));
+    await mobile.goto(base);
+    await mobile.getByRole('button', { name: '02 작업 문서' }).click();
+    await mobile.getByRole('button', { name: '관계 그래프 보기', exact: true }).click();
+    await mobile.getByRole('button', { name: '재료 입력으로 이동' }).click();
+    assert.equal(await mobile.locator('#source-text').evaluate(el => document.activeElement === el), true);
+    await mobile.locator('#source-text').fill('유리 사막, 기억을 파는 상인, 사라진 달');
+    await mobile.getByRole('button', { name: '재료 정리하기' }).click();
+    await mobile.getByRole('button', { name: '초안 요청으로 이동' }).click();
+    await mobile.screenshot({ path: path.join(output, 'mobile-navigation-debug.png'), fullPage: true });
+    assert.equal(await mobile.locator('#story-request').evaluate(el => document.activeElement === el), true);
+    await mobile.getByRole('button', { name: '첫 설정 만들기' }).click();
+    await mobile.getByRole('button', { name: '근거와 검토를 확인하고 채택 여부 결정' }).click();
+    await mobile.locator('#decision-reason').waitFor({ state: 'visible' });
+    assert.equal(await mobile.locator('#review-heading').evaluate(el => document.activeElement === el), true);
+    const mobileId = await mobile.evaluate(() => localStorage.getItem('loreforge.run'));
+    const mobileRun = await (await context.request.get(`${base}/api/runs/${mobileId}`)).json();
+    const pendingFixture = { ...mobileRun, status: 'needs_attention', pending_issues: [{
+      origin_run_id: mobileId, document_ref: `${mobileRun.draft.document_id}:1`,
+      issue: { id: 'author-choice', kind: 'intent_question', reason: '사라진 달의 운명은 작가의 선택이 필요합니다.', suggestion: '봉인과 소멸 중 의도한 방향을 정해주세요.', status: 'open', evidence: [] },
+      evidence_snapshots: [{ document_ref: `${mobileRun.draft.document_id}:1`, passage_id: 'p01', text: '달의 운명은 아직 결정되지 않았다.' }],
+    }] };
+    await mobile.route(`**/api/runs/${mobileId}`, route => route.fulfill({ json: pendingFixture }));
+    await mobile.reload();
+    await mobile.getByRole('button', { name: '03 검토' }).click();
+    await mobile.locator('.pending-issue summary').click();
+    assert((await mobile.locator('.pending-issue blockquote').innerText()).includes('달의 운명은 아직 결정되지 않았다.'));
+    assert.equal(await mobile.locator('.issue-card').count(), 0, 'Original pending evidence must not become a current-version finding');
+    await mobile.screenshot({ path: path.join(output, '04-pending-mobile.png'), fullPage: true });
+    await mobile.getByRole('button', { name: '02 작업 문서' }).click();
+    await mobile.getByRole('button', { name: '첫 초안', exact: true }).click();
+    await mobile.getByRole('button', { name: '03 검토' }).click();
+    await mobile.getByRole('button', { name: '최종 수정본 보기' }).click();
+    assert(await mobile.locator('.story-document').isVisible());
+    assert.equal(await mobile.locator('.version-tabs button.active').innerText(), '수정본');
+    assert(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await mobileContext.close();
     assert.deepEqual(errors, []);
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, provider: 'mock', first_run: firstId, continuation_run: secondId, checks: ['keyword generation','revision','graph node/edge keyboard navigation','evidence jump','version-scoped issues','accept/defer','export','reload persistence','accepted-only continuation','graph no AI calls','30/60 display limit','filtered beyond-limit node','partial/empty graph','390px mobile panels','TXT/MD import','HTML inert'], page_errors: errors }, null, 2));
+    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, provider: 'mock', first_run: firstId, continuation_run: secondId, checks: ['keyword generation','revision','graph node/edge keyboard navigation','evidence jump','version-scoped issues','accept/defer','export','reload persistence','accepted-only continuation','graph no AI calls','30/60 display limit','filtered beyond-limit node','partial/empty graph','390px mobile panels','TXT/MD import','HTML inert','first-use mobile focus and next actions','pending original-version evidence'], page_errors: errors }, null, 2));
     console.log(`Browser acceptance passed. Artifacts: ${output}`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

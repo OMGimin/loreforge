@@ -1,4 +1,5 @@
 """Document validation, evidence resolution, graph and safe Markdown export."""
+import copy
 import re
 from collections import Counter
 from pydantic import ValidationError
@@ -12,6 +13,41 @@ def ref(document):
 
 def passage_map(documents):
     return {(ref(d), p["id"]): p["text"] for d in documents for p in d["passages"]}
+
+
+def issue_records(run, reviewed, kinds=None):
+    """Keep original review provenance without making rejected text canonical."""
+    documents = [*run["context"]["documents"], *[run[key] for key in ("draft", "revision") if run.get(key)]]
+    mapping = passage_map(documents)
+    records = []
+    for issue in reviewed["issues"]:
+        if issue["status"] != "open" or (kinds is not None and issue["kind"] not in kinds):
+            continue
+        snapshots = []
+        for evidence in issue["evidence"]:
+            snapshot = {**evidence, "text": mapping[(evidence["document_ref"], evidence["passage_id"])]}
+            if snapshot not in snapshots:
+                snapshots.append(snapshot)
+        records.append({"origin_run_id": run["id"], "document_ref": reviewed["document_ref"],
+                        "issue": copy.deepcopy(issue), "evidence_snapshots": snapshots})
+    return records
+
+
+def merge_pending_issues(*groups):
+    records, seen = [], set()
+    for group in groups:
+        for record in group:
+            key = (record["origin_run_id"], record["document_ref"], record["issue"]["id"])
+            if key not in seen:
+                seen.add(key)
+                records.append(copy.deepcopy(record))
+    return records
+
+
+def pending_issues_length(records):
+    # Repeated reason/suggestion/evidence text within a record counts only once.
+    return sum(sum(len(text) for text in {record["issue"]["reason"], record["issue"]["suggestion"],
+                                        *[e["text"] for e in record["evidence_snapshots"]]}) for record in records)
 
 
 def valid_evidence(evidence, document, context, allow_empty=False):
@@ -148,7 +184,7 @@ def export_markdown(run):
         item = next(e for e in source_doc["entities"] if e["id"] == eid)
         return f'{escape(item["name"])} ({", ".join(link(e) for e in item["evidence"])})'
     lines = [f'# {escape(doc["title"])}', "", f'문서: {ref(doc)} · {doc["kind"]} · {doc["decision"]}',
-             f'기준 버전: {doc["context_version"]}', f'제공자: {run["provider"]}', ""]
+             f'기준 버전: {doc["context_version"]}', f'제공자: {run["provider"]}', f'실행 상태: {run.get("status", "unknown")}', ""]
     for p in doc["passages"]:
         lines += [f'## passage-{p["id"]}', "", p["text"].replace("<", "&lt;").replace(">", "&gt;"), ""]
     for item in doc["entities"]:
@@ -167,6 +203,20 @@ def export_markdown(run):
                 if (e["document_ref"], e["passage_id"]) not in mapping and run["draft"] and e["document_ref"] == ref(run["draft"]):
                     mapping[(e["document_ref"], e["passage_id"])] = next(p["text"] for p in run["draft"]["passages"] if p["id"] == e["passage_id"])
             lines.append("  근거: " + ", ".join(link(e) for e in i["evidence"]))
+    pending = merge_pending_issues(run.get("pending_issues", []), run["context"].get("unresolved_issues", []))
+    shown = {(r["document_ref"], i["id"]) for r in run["reviews"] for i in r["issues"]}
+    pending = [record for record in pending if (record["document_ref"], record["issue"]["id"]) not in shown]
+    if pending:
+        lines += ["", "## 보존한 미해결 쟁점", "", "아래 기록은 원래 검토 문서의 쟁점이며 현재 최종 문서의 검토 결과와 구분합니다. 채택이나 이어쓰기로 자동 해결되지 않습니다.", ""]
+        for number, record in enumerate(pending, 1):
+            issue = record["issue"]
+            lines += [f'### 보존 쟁점 {number}', "", f'원래 실행: {escape(record["origin_run_id"])}',
+                      f'원래 검토 문서: {escape(record["document_ref"])}',
+                      f'{escape(issue["kind"])} · {escape(issue["status"])}: {escape(issue["reason"])}',
+                      f'제안: {escape(issue["suggestion"])}', ""]
+            for snapshot in record["evidence_snapshots"]:
+                lines += [f'원래 근거: {escape(snapshot["document_ref"])} / {escape(snapshot["passage_id"])}',
+                          "", escape(snapshot["text"]), ""]
     lines += ["", f'결정: {run["decision"]["status"]} — {escape(run["decision"]["reason"])}', ""]
     for (dref, pid), n in external.items():
         lines += [f'## evidence-{n}', "", f'{dref} / {pid}', "", escape(mapping[(dref, pid)]), ""]

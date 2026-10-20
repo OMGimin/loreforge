@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from langsmith import tracing_context
 from .models import SourceInput, AnalyzeInput, RunInput, DecisionInput
 from .store import Store, now, new_id
-from .documents import document, analyze_document, ref, graph, export_markdown, valid_evidence
+from .documents import document, analyze_document, ref, graph, export_markdown, valid_evidence, issue_records, merge_pending_issues, pending_issues_length
 from .provider import MockProvider, OpenAIProvider, call_provider, usage, PROMPT_VERSION
 from .workflow import build_workflow
 from .tracing import trace_start, trace_end
@@ -199,6 +199,7 @@ def create_app(db_path=None, provider=None):
         if previous:
             return previous
         analysis = None
+        pending = []
         if body.analysis_id:
             analysis = required("analysis", body.analysis_id)
             if analysis["status"] != "completed":
@@ -224,11 +225,14 @@ def create_app(db_path=None, provider=None):
             docs.append(final)
             conditions = [*previous_run["context"]["constraints"], *body.constraints]
             stats = usage()
-        if sum(len(p["text"]) for d in docs for p in d["passages"]) + sum(len(c) for c in body.constraints) > 20000:
-            raise HTTPException(422, "입력·조건·채택 설정의 기준 본문 합계를 20,000자 이하로 줄여주세요")
+            final_reviews = [reviewed for reviewed in previous_run["reviews"] if reviewed["document_ref"] == ref(final)]
+            pending = merge_pending_issues(previous_run["context"].get("unresolved_issues", []), previous_run.get("pending_issues", []),
+                                           *[issue_records(previous_run, reviewed) for reviewed in final_reviews])
+        if sum(len(p["text"]) for d in docs for p in d["passages"]) + sum(len(c) for c in body.constraints) + pending_issues_length(pending) > 20000:
+            raise HTTPException(422, "입력·조건·채택 설정·보존 쟁점의 기준 본문 합계를 20,000자 이하로 줄여주세요")
         await acquire()
         try:
-            context = {"version": new_id("context"), "documents": docs, "constraints": conditions}
+            context = {"version": new_id("context"), "documents": docs, "constraints": conditions, "unresolved_issues": copy.deepcopy(pending)}
             # Conditions have explicit evidence passages, while remaining separately readable.
             if body.constraints:
                 condition_doc = document({"title": "보호 조건", "passages": [{"id": f"c{i}", "text": c} for i,c in enumerate(body.constraints, 1)], "entities": [], "relations": []}, "input", context["version"])
@@ -240,7 +244,7 @@ def create_app(db_path=None, provider=None):
             run = {"id": new_id("run"), "source_id": source_id, "analysis_id": body.analysis_id,
                    "accepted_run_id": body.accepted_run_id, "continuation_document_ref": ref(final) if body.accepted_run_id else None, "status": "running", "stage": "queued", "request": body.request.strip() or default,
                    "request_input": body.request, "constraints_input": body.constraints, "context": context, "draft": None, "revision": None,
-                   "reviews": [], "decision": {"status": "pending", "reason": ""}, "usage": stats, "error": None,
+                   "reviews": [], "pending_issues": copy.deepcopy(pending), "decision": {"status": "pending", "reason": ""}, "usage": stats, "error": None,
                    "warnings": ["명시적 모의 제공자: 고정된 공개 가상 예시이며 실제 AI 생성·토큰 사용 결과가 아닙니다."] if provider.name == "mock" else [],
                    "created_at": now(), "prompt_version": PROMPT_VERSION, "trace": body.trace, "provider": provider.name, "models": provider.models}
             store.put("context", context["version"], context)

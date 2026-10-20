@@ -93,6 +93,10 @@ const allDocuments = computed(() => {
 })
 const usage = computed(() => run.value?.usage || analysis.value?.usage)
 const unresolved = computed(() => currentIssues.value.filter(issue => issue.status !== 'resolved').length)
+const pendingIssues = computed(() => (run.value?.pending_issues || run.value?.context.unresolved_issues || []).filter(entry =>
+  !selectedDocument.value || entry.document_ref !== documentRef(selectedDocument.value) ||
+  !currentIssues.value.some(issue => issue.id === entry.issue.id),
+))
 const stageNames: Record<string, string> = {
   preparing: '기준 준비', analyzing: '재료 분석', analysis: '재료 분석', queued: '작업 준비',
   draft: '초안 작성', writing: '초안 작성', generating: '초안 작성', review: '근거 검토', reviewing: '근거 검토',
@@ -111,6 +115,20 @@ const disableReason = computed(() => {
   return inputError.value
 })
 
+async function focusPanel(panel: 'materials' | 'document' | 'review', target: string) {
+  mobilePanel.value = panel
+  await nextTick()
+  const element = document.getElementById(target)
+  element?.focus({ preventScroll: true })
+  element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+function showFinalDocument() {
+  currentView.value = run.value?.revision ? 'revision' : 'draft'
+  mode.value = 'body'
+  evidenceDocument.value = null
+  highlightedPassage.value = ''
+  mobilePanel.value = 'document'
+}
 function resetSelection() {
   selectedItem.value = null
   selectedIssue.value = null
@@ -271,7 +289,7 @@ async function analyze() {
     selectedFacts.value = []
     currentView.value = 'input'
     await loadGraph()
-    feedback.value = '재료를 정리했습니다. 반드시 지킬 내용만 선택한 뒤 초안을 만들어보세요.'
+    feedback.value = '재료를 정리했습니다. 지킬 조건은 선택 사항입니다. 「초안 요청으로 이동」에서 첫 설정을 만들어보세요.'
   } catch (cause) { error.value = message(cause) }
   finally { analyzing.value = false }
 }
@@ -397,7 +415,7 @@ async function decide(status: 'accepted' | 'deferred') {
     highlightedPassage.value = ''
     graphCache.clear()
     await loadGraph()
-    feedback.value = status === 'accepted' ? '최종 문서 전체를 채택했습니다. 남은 쟁점도 함께 보존됩니다.' : '최종 문서 전체를 보류했습니다. 다음 작업의 기준에 자동 포함되지 않습니다.'
+    feedback.value = status === 'accepted' ? '최종 문서 전체를 채택했습니다. 「이 설정 이어쓰기」로 다음 사건을 만들 수 있습니다. 남은 쟁점도 함께 보존됩니다.' : '최종 문서 전체를 보류했습니다. 다음 작업의 기준에 자동 포함되지 않습니다.'
   } catch (cause) { error.value = message(cause) }
   finally { deciding.value = false }
 }
@@ -479,7 +497,7 @@ onBeforeUnmount(stopWatching)
 
         <section class="constraints-section">
           <div class="label-row"><h2>지켜야 할 조건</h2><span class="optional-label">선택</span></div>
-          <p class="field-hint">한 줄에 하나씩 적어주세요. 선택하지 않아도 시작할 수 있어요.</p>
+          <p class="field-hint">꼭 지킬 내용이 있다면 한 줄에 하나씩 적어주세요. 비워두어도 시작할 수 있어요.</p>
           <textarea id="constraints" v-model="directConstraints" rows="3" :disabled="Boolean(run) || busy" placeholder="예: 잃어버린 기억은 돌아오지 않는다" aria-label="반드시 지킬 조건" />
           <div v-if="analysis?.facts.length && !run" class="fact-candidates">
             <div class="candidate-heading">재료에서 찾은 후보 <span>{{ selectedFacts.length }}개 선택</span></div>
@@ -495,7 +513,7 @@ onBeforeUnmount(stopWatching)
 
         <div v-if="!run" class="prepare-actions">
           <button v-if="!analysis && !continuing" class="primary-button full-width" :disabled="!canAnalyze" @click="analyze"><span v-if="analyzing" class="spinner" />{{ analyzing ? '재료를 정리하고 있어요' : '재료 정리하기' }}<span v-if="!analyzing">→</span></button>
-          <div v-else-if="analysis" class="prepared-label"><span>✓</span> 재료 정리 완료 <small>오른쪽 요청에서 초안을 만들어보세요.</small></div>
+          <template v-else-if="analysis"><div class="prepared-label"><span>✓</span> 재료 정리 완료 <small>조건을 고르거나 바로 첫 설정을 만들 수 있어요.</small></div><button class="full-width" @click="focusPanel('document', 'story-request')">초안 요청으로 이동 →</button></template>
           <p v-if="!canAnalyze && !analysis && !continuing" class="field-hint">{{ disableReason }}</p>
         </div>
 
@@ -510,7 +528,7 @@ onBeforeUnmount(stopWatching)
       </aside>
 
       <section class="document-panel panel" :class="{ 'mobile-active': mobilePanel === 'document' }" aria-label="본문과 관계 그래프">
-        <div class="document-toolbar"><div class="version-tabs" aria-label="문서 버전"><button v-for="(label, value) in viewLabels" :key="value" :class="{ active: currentView === value }" :disabled="value === 'input' ? !source : !run?.[value]" @click="currentView = value">{{ label }}<span v-if="value === 'revision' && run?.revision" class="version-dot" /></button></div><div class="view-switch" aria-label="보기 방식"><button :class="{ active: mode === 'body' }" @click="mode = 'body'">☷ <span>본문</span></button><button :class="{ active: mode === 'graph' }" @click="mode = 'graph'">⌘ <span>관계</span></button></div></div>
+        <div class="document-toolbar"><div class="version-tabs" aria-label="문서 버전"><button v-for="(label, value) in viewLabels" :key="value" :class="{ active: currentView === value }" :disabled="value === 'input' ? !source : !run?.[value]" @click="currentView = value">{{ label }}<span v-if="value === 'revision' && run?.revision" class="version-dot" /></button></div><div class="view-switch" aria-label="보기 방식"><button :class="{ active: mode === 'body' }" aria-label="본문 보기" @click="mode = 'body'">☷ <span>본문</span></button><button :class="{ active: mode === 'graph' }" aria-label="관계 그래프 보기" @click="mode = 'graph'">⌘ <span>관계</span></button></div></div>
 
         <div v-if="analyzing || run" class="run-progress" :class="{ working: analyzing || running }" role="status" aria-live="polite">
           <div class="progress-head"><span v-if="analyzing || running" class="spinner" /><span v-else class="status-symbol">{{ run?.status === 'completed' ? '✓' : '◷' }}</span><strong>{{ stageText }}</strong><span v-if="run" class="status-caption">{{ statusLabel[run.status] || run.status }}</span></div>
@@ -527,6 +545,7 @@ onBeforeUnmount(stopWatching)
           <template v-if="mode === 'graph'">
             <div v-if="graphLoading" class="center-loading"><span class="spinner" />저장된 관계를 불러오는 중</div>
             <div v-else-if="graphError" class="empty-state compact"><span>◇</span><h2>그래프를 불러오지 못했어요</h2><p>{{ graphError }}</p><button @click="loadGraph">다시 불러오기</button></div>
+            <div v-else-if="!selectedDocument" class="empty-state compact"><span>◇</span><h2>{{ running ? '관계도를 준비하고 있어요' : '재료를 정리하면 관계를 볼 수 있어요' }}</h2><p>{{ running ? '초안이 저장되면 인물과 관계를 이곳에서 살펴볼 수 있습니다.' : continuing ? '이야기 이어가기를 실행하면 새 초안의 관계를 살펴볼 수 있습니다.' : '키워드나 메모를 입력하고 「재료 정리하기」를 눌러주세요.' }}</p><button v-if="!run && !continuing" @click="focusPanel('materials', 'source-text')">재료 입력으로 이동 →</button></div>
             <RelationshipGraph v-else :graph="graph" :issue-id="selectedIssue?.id" :issue-evidence="selectedIssue?.evidence" @select="chooseItem" />
           </template>
           <template v-else-if="bodyDocument">
@@ -534,14 +553,14 @@ onBeforeUnmount(stopWatching)
             <article class="story-document"><div class="document-kicker"><span class="badge" :class="bodyDocument.decision">{{ bodyDocument.kind === 'input' ? '입력 원문' : statusLabel[bodyDocument.decision] || 'AI 제안' }}</span><span>{{ viewLabels[bodyDocument.kind as DocumentView] || '기준 문서' }} · v{{ String(bodyDocument.version).slice(0, 8) }}</span></div><h2>{{ bodyDocument.title || sourceTitle || '아직 이름 없는 세계' }}</h2><div class="title-rule"><span /></div><section v-for="passage in bodyDocument.passages" :id="`passage-${passage.id}`" :key="passage.id" class="passage" :class="{ highlighted: highlightedPassage === `${documentRef(bodyDocument)}:${passage.id}` }"><span class="passage-id">{{ passage.id }}</span><p>{{ passage.text }}</p></section><footer class="document-footer"><span>◇</span> {{ bodyDocument.kind === 'input' ? '입력 원문은 바꾸지 않고 보존합니다.' : 'AI가 제안한 설정입니다. 채택 여부와 남은 쟁점을 확인해주세요.' }}</footer></article>
           </template>
           <div v-else-if="continuing" class="empty-state continuation-empty"><span class="empty-emblem">↗</span><span class="eyebrow">THE NEXT CHAPTER</span><h2>다음 이야기는<br />어디로 향할까요?</h2><p>채택한 설정을 기준으로 다음 사건을 제안합니다.<br />아래에 원하는 전개를 적거나, 바로 이어가세요.</p><div class="context-preview" v-for="doc in continuationDocuments" :key="documentRef(doc)"><span>{{ doc.kind === 'input' ? '기존 입력' : '채택 설정' }}</span><strong>{{ doc.title || '입력 자료' }}</strong><small>{{ doc.passages.length }}개 문단</small></div></div>
-          <div v-else class="empty-state"><div class="manuscript-art" aria-hidden="true"><div class="art-sheet"><span>WORLD NOTES</span><i /><i /><i /><i /><b>◇</b></div><div class="orbit orbit-one" /><div class="orbit orbit-two" /><span class="art-spark spark-one">✧</span><span class="art-spark spark-two">·</span></div><span class="eyebrow">EVERY WORLD BEGINS WITH A SEED</span><h2>작은 생각에서,<br />하나의 세계로.</h2><p>먼저 왼쪽에 이야기의 재료를 놓아주세요.<br />설정을 정리하고, 만들고, 근거와 함께 살펴봅니다.</p><div class="welcome-steps"><span><b>01</b> 재료 정리</span><i>→</i><span><b>02</b> 초안과 검토</span><i>→</i><span><b>03</b> 나의 선택</span></div></div>
+          <div v-else class="empty-state"><div class="manuscript-art" aria-hidden="true"><div class="art-sheet"><span>WORLD NOTES</span><i /><i /><i /><i /><b>◇</b></div><div class="orbit orbit-one" /><div class="orbit orbit-two" /><span class="art-spark spark-one">✧</span><span class="art-spark spark-two">·</span></div><span class="eyebrow">EVERY WORLD BEGINS WITH A SEED</span><h2>작은 생각에서,<br />하나의 세계로.</h2><p>「이야기의 씨앗」에 키워드나 메모를 적고<br />「재료 정리하기」를 눌러 시작하세요.</p><div class="welcome-steps"><span><b>01</b> 재료 정리</span><i>→</i><span><b>02</b> 초안과 검토</span><i>→</i><span><b>03</b> 검토 후 채택</span></div></div>
         </div>
 
-        <div class="request-composer" :class="{ inactive: Boolean(run) }"><div class="label-row"><label for="story-request" class="field-label">{{ continuing ? '이 설정에서 이어갈 이야기' : run ? '이번 작업의 요청' : '어떤 이야기로 펼쳐볼까요?' }} <span v-if="!run">선택</span></label><span class="request-count" :class="{ 'limit-exceeded': request.length > 2000 }">{{ request.length.toLocaleString() }} / 2,000</span></div><textarea id="story-request" v-model="request" rows="2" :disabled="Boolean(run) || busy" :placeholder="continuing ? '예: 주인공이 잃어버린 기억의 주인을 만나는 사건을 써줘' : '예: 주인공의 첫 번째 선택과 그 대가를 구체화해줘'" /><div class="composer-footer"><p>{{ run ? '기준과 실제 요청은 실행 기록에 보존됩니다.' : continuing ? '비워두면 채택한 설정을 지키며 다음 사건 하나를 만듭니다.' : '비워두면 세계 규칙·인물·갈등의 첫 설정 초안을 만듭니다.' }}</p><button v-if="!run" class="primary-button generate-button" :disabled="!canGenerate" @click="generate"><span v-if="submitting" class="spinner" />{{ submitting ? '작업 시작 중' : continuing ? '이야기 이어가기' : '첫 설정 만들기' }}<span v-if="!submitting">↗</span></button></div><div v-if="!run" class="trace-option"><label><input v-model="trace" type="checkbox" :disabled="busy" /><span>공개용 가상 자료임을 확인했으며 LangSmith 외부 추적에 동의합니다.</span></label><small>선택 시 단계·모델·토큰 등 실행 메타데이터를 전송합니다. 본문은 추적에 기록하지 않습니다.</small></div><p v-if="!run && !canGenerate && (analysis || continuing || request.length > 2000)" class="field-hint">{{ disableReason || '재료 정리를 마친 뒤 생성할 수 있습니다.' }}</p></div>
+        <div class="request-composer" :class="{ inactive: Boolean(run) }"><div class="label-row"><label for="story-request" class="field-label">{{ continuing ? '이 설정에서 이어갈 이야기' : run ? '이번 작업의 요청' : '어떤 이야기로 펼쳐볼까요?' }} <span v-if="!run">선택</span></label><span class="request-count" :class="{ 'limit-exceeded': request.length > 2000 }">{{ request.length.toLocaleString() }} / 2,000</span></div><textarea id="story-request" v-model="request" rows="2" :disabled="Boolean(run) || busy" :placeholder="continuing ? '예: 주인공이 잃어버린 기억의 주인을 만나는 사건을 써줘' : '예: 주인공의 첫 번째 선택과 그 대가를 구체화해줘'" /><div class="composer-footer"><p>{{ run ? '기준과 실제 요청은 실행 기록에 보존됩니다.' : !analysis && !continuing ? '먼저 재료를 입력하고 「재료 정리하기」를 눌러주세요.' : continuing ? '비워두면 채택한 설정을 지키며 다음 사건 하나를 만듭니다.' : '요청은 비워두어도 됩니다. 첫 설정을 만든 뒤 AI가 검토하고 최대 한 번 수정합니다.' }}</p><button v-if="!run" class="primary-button generate-button" :disabled="!canGenerate" @click="generate"><span v-if="submitting" class="spinner" />{{ submitting ? '작업 시작 중' : continuing ? '이야기 이어가기' : '첫 설정 만들기' }}<span v-if="!submitting">↗</span></button></div><button v-if="decisionAllowed && !running" class="text-button review-next-action" @click="focusPanel('review', 'review-heading')">근거와 검토를 확인하고 채택 여부 결정 →</button><div v-if="!run" class="trace-option"><label><input v-model="trace" type="checkbox" :disabled="busy" /><span>공개용 가상 자료임을 확인했으며 LangSmith 외부 추적에 동의합니다.</span></label><small>선택 시 단계·모델·토큰 등 실행 메타데이터를 전송합니다. 본문은 추적에 기록하지 않습니다.</small></div><p v-if="!run && !canGenerate && (analysis || continuing || request.length > 2000)" class="field-hint">{{ disableReason || '재료 정리를 마친 뒤 생성할 수 있습니다.' }}</p></div>
       </section>
 
       <aside class="review-panel panel" :class="{ 'mobile-active': mobilePanel === 'review' }" aria-label="근거 상세와 검토·채택">
-        <div class="panel-heading"><div><span class="eyebrow">EVIDENCE & REVIEW</span><h2>근거와 나의 판단</h2></div><span class="section-number">03</span></div>
+        <div class="panel-heading"><div><span class="eyebrow">EVIDENCE & REVIEW</span><h2 id="review-heading" tabindex="-1">근거와 나의 판단</h2></div><span class="section-number">03</span></div>
         <section v-if="selectedItem" class="item-detail"><div class="detail-topline"><span class="badge">{{ selectedItem.source ? '관계' : kindLabel[selectedItem.type] || selectedItem.type }}</span><button class="text-button" aria-label="선택 상세 닫기" @click="selectedItem = null">×</button></div><h3>{{ selectedItem.label }}</h3><div class="detail-badges"><span>{{ statusLabel[selectedItem.status] || selectedItem.status }}</span><span>{{ basisLabel(selectedItem.basis) }}</span></div><p v-if="selectedItem.description">{{ selectedItem.description }}</p><p v-if="selectedItem.condition" class="condition-detail">적용 조건 · {{ selectedItem.condition }}</p><div v-if="selectedItem.source" class="relation-direction">{{ graph.nodes.find(n => n.data.id === selectedItem?.source)?.data.label || selectedItem.source }} <span>→ {{ selectedItem.label }} →</span> {{ graph.nodes.find(n => n.data.id === selectedItem?.target)?.data.label || selectedItem.target }}</div><span class="detail-label">본문 근거</span><button v-for="(evidence, i) in selectedItem.evidence" :key="i" class="evidence-card" @click="jumpEvidence(evidence, selectedItem.document_ref)"><span>{{ findEvidence(evidence, selectedItem.document_ref).doc?.title || '참조 문서' }} · {{ evidence.passage_id }} <b>↗</b></span><p>{{ findEvidence(evidence, selectedItem.document_ref).passage?.text || '근거 문단을 확인할 수 없습니다.' }}</p></button><p v-if="!selectedItem.evidence.length" class="field-hint">연결된 근거 문단이 없습니다.</p><p v-if="selectedItem.issue_ids?.length" class="field-hint">이 항목과 근거가 겹치는 쟁점이 {{ selectedItem.issue_ids.length }}개 있습니다. 아래 검토 목록을 확인해주세요.</p><p class="field-hint">선택은 탐색 동작입니다. 생성이나 개별 채택을 실행하지 않습니다.</p></section>
 
         <section class="review-section"><div class="review-title-row"><h3>{{ currentView === 'revision' ? '수정본 검토' : currentView === 'draft' ? '초안 검토' : '검토 노트' }}</h3><span v-if="currentIssues.length" class="issue-count">{{ unresolved }}개 미해결</span></div><p class="field-hint">AI의 검토는 판단을 돕는 단서입니다.<br />이야기의 의도와 최종 선택은 창작자에게 있습니다.</p>
@@ -551,7 +570,18 @@ onBeforeUnmount(stopWatching)
           <div v-for="issue in currentIssues" :key="issue.id" class="issue-card" :class="{ selected: selectedIssue?.id === issue.id, resolved: issue.status === 'resolved' }"><button class="issue-toggle" :aria-expanded="selectedIssue?.id === issue.id" @click="chooseIssue(issue)"><span class="issue-kind">{{ issueLabel[issue.kind] || issue.kind }}</span><span class="issue-state">{{ issue.status === 'resolved' ? '해결됨' : '확인 필요' }}</span><strong>{{ issue.reason }}</strong><span class="issue-more">{{ selectedIssue?.id === issue.id ? '접기 −' : '근거와 제안 보기 +' }}</span></button><div v-if="selectedIssue?.id === issue.id" class="issue-expanded"><p class="issue-suggestion"><span>수정 제안</span>{{ issue.suggestion }}</p><button v-for="(evidence, i) in issue.evidence" :key="i" class="evidence-card" @click="jumpEvidence(evidence)"><span>{{ findEvidence(evidence).doc?.title || '참조 문서' }} · {{ evidence.passage_id }} <b>↗</b></span><p>{{ findEvidence(evidence).passage?.text || '근거 문단을 확인할 수 없습니다.' }}</p></button><button class="text-button graph-issue-link" @click="mode = 'graph'; mobilePanel = 'document'">관계에서 관련 근거 살펴보기 ↗</button></div></div>
         </section>
 
-        <section v-if="run && !running && finalDocument" class="decision-section"><div class="label-row"><h3>이 설정을 어떻게 남길까요?</h3><span v-if="run.decision.status !== 'pending'" class="badge" :class="run.decision.status">{{ run.decision.status === 'accepted' ? '채택됨' : '보류됨' }}</span></div><p class="field-hint">{{ run.revision ? '수정본' : '초안' }} 전체에 적용합니다. 남은 쟁점도 함께 보존됩니다.</p><p v-if="!decisionAllowed" class="notice warning">생성·검토가 정상적으로 끝난 결과에만 채택·보류할 수 있습니다. 현재 결과는 읽기와 내보내기만 가능합니다.</p><p v-if="!finalView" class="notice warning">현재는 {{ viewLabels[currentView] }}을 보고 있습니다. 결정은 최종 {{ run.revision ? '수정본' : '초안' }}에 적용됩니다.</p><label for="decision-reason" class="field-label">판단 이유 <span>선택</span></label><textarea id="decision-reason" v-model="decisionReason" rows="2" :disabled="deciding" placeholder="남길 설정과 더 생각할 부분을 적어주세요" /><div class="decision-buttons"><button class="primary-button" :disabled="deciding || !decisionAllowed" @click="decide('accepted')">{{ deciding ? '저장 중' : '✓ 이 설정 채택' }}</button><button :disabled="deciding || !decisionAllowed" @click="decide('deferred')">보류</button></div><button v-if="run.decision.status === 'accepted'" class="continue-button" :disabled="busy" @click="continueStory">이 설정 이어쓰기 <span>→</span></button><button class="export-button" @click="exportDocument"><span>↓</span> 근거와 함께 Markdown 내보내기</button></section>
+        <section v-if="pendingIssues.length" class="pending-issues" aria-label="이전 검토의 미해결 쟁점">
+          <h3>이전 검토에서 남은 확인 사항 · {{ pendingIssues.length }}</h3>
+          <p class="field-hint">아래는 원래 문서에서 남은 쟁점입니다. 현재 버전의 검토 결과와 구분해 보존하며, 채택하거나 이어써도 자동으로 해결되지 않습니다.</p>
+          <details v-for="entry in pendingIssues" :key="`${entry.origin_run_id}:${entry.document_ref}:${entry.issue.id}`" class="pending-issue">
+            <summary><span class="issue-kind">{{ issueLabel[entry.issue.kind] || entry.issue.kind }}</span> {{ entry.issue.reason }}</summary>
+            <p>{{ entry.issue.suggestion }}</p>
+            <small>원래 검토 문서: {{ entry.document_ref }}</small>
+            <blockquote v-for="evidence in entry.evidence_snapshots" :key="`${evidence.document_ref}:${evidence.passage_id}`"><small>{{ evidence.document_ref }} · {{ evidence.passage_id }}</small><p>{{ evidence.text }}</p></blockquote>
+          </details>
+        </section>
+
+        <section v-if="run && !running && finalDocument" class="decision-section"><div class="label-row"><h3>이 설정을 어떻게 남길까요?</h3><span v-if="run.decision.status !== 'pending'" class="badge" :class="run.decision.status">{{ run.decision.status === 'accepted' ? '채택됨' : '보류됨' }}</span></div><p class="field-hint">{{ run.revision ? '수정본' : '초안' }} 전체에 적용합니다. 채택하면 이어쓰기의 기준으로 사용할 수 있습니다. 보류하면 기준에서 제외합니다. 남은 쟁점도 보존됩니다.</p><p v-if="!decisionAllowed" class="notice warning">생성·검토가 정상적으로 끝난 결과에만 채택·보류할 수 있습니다. 현재 결과는 읽기와 내보내기만 가능합니다.</p><p v-if="!finalView" class="notice warning">현재는 {{ viewLabels[currentView] }}을 보고 있습니다. 결정은 최종 {{ run.revision ? '수정본' : '초안' }}에 적용됩니다. <button class="text-button" @click="showFinalDocument">최종 {{ run.revision ? '수정본' : '초안' }} 보기 ↗</button></p><label for="decision-reason" class="field-label">판단 이유 <span>선택</span></label><textarea id="decision-reason" v-model="decisionReason" rows="2" :disabled="deciding" placeholder="남길 설정과 더 생각할 부분을 적어주세요" /><div class="decision-buttons"><button class="primary-button" :disabled="deciding || !decisionAllowed" @click="decide('accepted')">{{ deciding ? '저장 중' : '✓ 이 설정 채택' }}</button><button :disabled="deciding || !decisionAllowed" @click="decide('deferred')">보류</button></div><button v-if="run.decision.status === 'accepted'" class="continue-button" :disabled="busy" @click="continueStory">이 설정 이어쓰기 <span>→</span></button><button class="export-button" @click="exportDocument"><span>↓</span> 근거와 함께 Markdown 내보내기</button></section>
         <div class="review-foot"><span class="mini-flower">✧</span><p>설정은 연결하고,<br />선택은 당신에게 남깁니다.</p><small>원문 보존 · 자동 수정 최대 1회</small></div>
       </aside>
     </main>

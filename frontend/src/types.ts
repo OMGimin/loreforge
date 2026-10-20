@@ -75,6 +75,12 @@ export interface Issue {
   status: string
 }
 export interface Review { document_ref: string; issues: Issue[] }
+export interface PendingIssue {
+  origin_run_id: string
+  document_ref: string
+  issue: Issue
+  evidence_snapshots: (Evidence & { text: string })[]
+}
 export interface Run {
   id: string
   source_id: string
@@ -82,7 +88,8 @@ export interface Run {
   status: string
   stage: string
   request: string
-  context: { version: string; documents: StoryDocument[]; constraints: string[] }
+  context: { version: string; documents: StoryDocument[]; constraints: string[]; unresolved_issues?: PendingIssue[] }
+  pending_issues?: PendingIssue[]
   draft: StoryDocument | null
   revision: StoryDocument | null
   reviews: Review[]
