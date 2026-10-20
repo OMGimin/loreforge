@@ -32,7 +32,7 @@ Run 최소 필드: `id, mode, source_id, analysis_id, status, stage, request, co
 
 Run·analysis와 각 호출에 `prompt_version`을 기록하고 호출에는 요청 모델과 `response_model`을 구분한다. 실패 응답의 확인된 토큰도 합산하며, 응답을 받지 못한 호출은 `usage_known: false`와 경고로 남긴다.
 
-Review: `{document_ref, issues: Issue[]}`. Issue: `{id, kind, reason, suggestion, evidence: Evidence[], status: "open"|"resolved"}`. kind는 conflict_candidate/internal_conflict/missing_explanation/intent_question. 현재 문서의 검토와 과거 미해결 쟁점을 구분한다. `pending_issues`에는 원래 문서·근거 스냅샷을 보존하며, 의도 질문을 수정·채택·이어쓰기로 자동 해결하지 않는다. 이어받은 쟁점은 `context.unresolved_issues`로 전달하고 이전 초안을 확정 기준 문서로 편입하지 않는다. 사실 후보 Fact: `{id, text, kind, basis, evidence}`.
+Review: `{document_ref, issues: Issue[], screening?: ReviewCandidate[]}`. `ReviewCandidate`는 `{issue, verdict: unresolved|explained|optional, counter_evidence: Evidence[], rationale}`다. OpenAI 검토 응답은 `candidates`를 반환하고 서버가 문서·문단 참조를 검증해 unresolved만 issues에 넣는다. explained는 실제 해소 근거가 필수이며 존재하지 않는 참조·중복 후보 ID는 검토 실패다. 기존 저장 결과와 모의 응답의 issues 계약은 읽기 호환성을 유지한다. 제외 판정·근거는 원문 검토 화면과 Markdown 보고서에서 확인한다. 의미 판단은 같은 모델의 판정이며 참조 검증만으로 정확성을 보장하지 않는다. Issue: `{id, kind, reason, suggestion, evidence: Evidence[], status: "open"|"resolved"}`. kind는 conflict_candidate/internal_conflict/missing_explanation/intent_question. 현재 문서의 검토와 과거 미해결 쟁점을 구분한다. `pending_issues`에는 원래 문서·근거 스냅샷을 보존하며, 의도 질문을 수정·채택·이어쓰기로 자동 해결하지 않는다. 이어받은 쟁점은 `context.unresolved_issues`로 전달하고 이전 초안을 확정 기준 문서로 편입하지 않는다. 사실 후보 Fact: `{id, text, kind, basis, evidence}`.
 
 StoryDocument는 SETTING_DOCUMENT_FORMAT.md를 따른다. 서버 필드: `document_id, version, schema_version, kind, decision, context_version, parent_document_ref, graph_status, warnings`. 본문 필드: `title, passages, entities, relations`. 문서 참조는 `document_id:version`, 항목 참조는 여기에 `:entity_id`를 붙인다.
 
@@ -42,13 +42,13 @@ StoryDocument는 SETTING_DOCUMENT_FORMAT.md를 따른다. 서버 필드: `docume
 
 생성은 정상 최대 5회/재시도 포함 6회, 자동 수정 1회다. 검토 전용은 분석+검토 정상 2회/재시도 포함 최대 3회다. SDK 재시도 0, 분석과 실행에 걸쳐 429/일시적 5xx 재시도를 전체 1회만 공유한다. 기존 분석 멱등성·단일 작업 게이트·SSE·예산 저장과 재시작 복원을 유지한다. 호출 120초/자동 실행 600초. 기준 20,000자/요청 2,000자. raw 입력·조건·채택 문서만 기준에 포함한다. 단일 프로세스에서 동시 AI 작업 1개. 서버 재시작 시 running은 interrupted 처리하고 재개하지 않는다.
 
-그래프 관계 이름은 선택·마우스 올림 또는 전체 표시 선택 때만 드러낸다. 화면 맞춤은 라벨을 포함하고 크기 변경에 대응하며 최소 배율을 낮춰 큰 그래프를 담는다. 조작 도구는 캔버스 밖에 둔다.
+그래프는 COSE 연결 기반 배치를 기본으로 하고, 선택 중심에서는 연결 거리별 동심원으로 펼친다. 이름 경계를 고려하고 연결 없는 항목을 아래쪽에 따로 모은다. 크게 보기는 같은 Cytoscape DOM을 native dialog로 이동해 선택·필터를 보존하며 닫기/Escape 뒤 원래 버튼에 초점이 돌아간다. 확대에서는 화면 비율에 맞춰 연결 묶음 방향과 캔버스 높이를 조정한다. 그래프 관계 이름은 선택·마우스 올림 또는 전체 표시 선택 때만 드러낸다. 화면 맞춤은 라벨을 포함하고 크기 변경에 대응하며 최소 배율을 낮춰 큰 그래프를 담는다. 조작 도구는 캔버스 밖에 둔다.
 
 ## 검증 기록
 
-현재 작업 트리에서 scripts/check.sh의 Python 검사 98개·프런트엔드 검사 7개·타입 검사·빌드가 통과했다. 공개 가상 원고의 실제 HTTP/API 검토 2건은 각각 분석+검토 2회로 종료했고 원문 불변·창작/자동 수정 미호출·실제 MCP 조회·Markdown 내보내기를 확인했다. 브라우저에서 쟁점 우선 표시→근거 이동→그래프→선택 항목의 관련 쟁점 연결을 확인했다. 현재 문서·기준 함께 보기의 구분, 30항목·60관계 표시와 한도 밖 검색·빈 결과, 저장 결과 새로고침 복원을 확인했다. 상세 실행 증거와 한계는 [구현 결과](RESULTS.md)에 기록한다.
+검토 전용 추가 시점의 scripts/check.sh는 Python 검사 98개·프런트엔드 검사 7개·타입 검사·빌드가 통과했다. 이후 과잉 지적과 연결 기반 배치 보완의 최신 검사는 RESULTS.md에 기록한다. 공개 가상 원고의 실제 HTTP/API 검토 2건은 각각 분석+검토 2회로 종료했고 원문 불변·창작/자동 수정 미호출·실제 MCP 조회·Markdown 내보내기를 확인했다. 브라우저에서 쟁점 우선 표시→근거 이동→그래프→선택 항목의 관련 쟁점 연결을 확인했다. 현재 문서·기준 함께 보기의 구분, 30항목·60관계 표시와 한도 밖 검색·빈 결과, 저장 결과 새로고침 복원을 확인했다. 상세 실행 증거와 한계는 [구현 결과](RESULTS.md)에 기록한다.
 
-검토 전용 프롬프트 v6-source-review는 한 문단 내부에 모순되는 두 주장이 있으면 실제 원문 근거 1개와 두 주장을 설명한 이유를 허용한다. 근거 중복은 거절하며 생성 초안 검토의 두 문단 근거 조건은 유지한다.
+현재 검토 프롬프트는 `loreforge-v7-counterevidence`다. 원문 전체의 설명·예외·배타적 분기를 먼저 확인하고 해소된 지적·선택적 상세화를 제외한다. 후보는 최대 12개이며 별도 모델 호출을 추가하지 않는다. v6에서 도입한 근거 규칙을 유지해, 한 문단 내부에 모순되는 두 주장이 있으면 실제 원문 근거 1개와 두 주장을 설명한 이유를 허용한다. 근거 중복은 거절하며 생성 초안 검토의 두 문단 근거 조건은 유지한다.
 
 아래는 검토 전용 추가 이전 생성 MVP의 검증 기록이다.
 
