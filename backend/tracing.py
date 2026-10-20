@@ -13,7 +13,9 @@ async def trace_start(name, metadata, parent=None):
         client = Client(timeout_ms=3000)
         await asyncio.wait_for(asyncio.to_thread(client.create_run, id=id, name=f"LoreForge/{name}", run_type="chain", inputs={},
             extra={"metadata": metadata}, project_name=os.getenv("LANGSMITH_PROJECT", "LoreForge"),
-            **({"parent_run_id": parent, "trace_id": parent} if parent else {})), timeout=5)
+            # Basic /runs ingestion derives trace_id and dotted_order from parent.
+            # Supplying trace_id alone makes the API reject child spans with HTTP 400.
+            **({"parent_run_id": parent} if parent else {})), timeout=5)
         return id
     except Exception:
         return None
