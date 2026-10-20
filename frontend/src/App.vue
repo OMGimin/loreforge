@@ -92,6 +92,11 @@ const allDocuments = computed(() => {
   return documents.filter((doc): doc is StoryDocument => Boolean(doc)).filter((doc, i, docs) => docs.findIndex(other => documentRef(other) === documentRef(doc)) === i)
 })
 const usage = computed(() => run.value?.usage || analysis.value?.usage)
+const runWarnings = computed(() => {
+  const counts = new Map<string, number>()
+  for (const warning of run.value?.warnings || []) counts.set(warning, (counts.get(warning) || 0) + 1)
+  return [...counts].map(([message, count]) => ({ message, count }))
+})
 const unresolved = computed(() => currentIssues.value.filter(issue => issue.status !== 'resolved').length)
 const pendingIssues = computed(() => (run.value?.pending_issues || run.value?.context.unresolved_issues || []).filter(entry =>
   !selectedDocument.value || entry.document_ref !== documentRef(selectedDocument.value) ||
@@ -538,7 +543,8 @@ onBeforeUnmount(stopWatching)
           <div v-if="usage" class="usage-line"><span>호출 {{ usage.attempts || 0 }}회 / 최대 6회</span><span>재시도 {{ usage.retries || 0 }}회</span><span>{{ (usage.elapsed_seconds || 0).toFixed(1) }}초</span><span>입력 {{ (usage.input_tokens || 0).toLocaleString() }} · 출력 {{ (usage.output_tokens || 0).toLocaleString() }} 토큰</span></div>
           <p v-if="run?.error" class="inline-error">{{ run.error }}</p>
           <p v-if="run?.status === 'interrupted'" class="field-hint">서버가 재시작되어 중단된 작업입니다. 유료 호출을 자동 재개하지 않습니다. 새 작업으로 다시 시작해주세요.</p>
-          <p v-for="warning in run?.warnings || []" :key="warning" class="notice warning">{{ warning }}</p>
+          <p v-if="runWarnings.length" class="field-hint">실행 전체 경고입니다. 이전 초안의 경고도 보존합니다.</p>
+          <p v-for="warning in runWarnings" :key="warning.message" class="notice warning">{{ warning.message }}<span v-if="warning.count > 1"> · 같은 내용의 경고 {{ warning.count }}건</span></p>
         </div>
 
         <div class="document-content">
