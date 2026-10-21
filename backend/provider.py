@@ -5,7 +5,25 @@ import os
 import time
 from .models import StructuredAnalysis, StructuredStory, StoryOutput, AnalysisOutput, ScreenedReviewOutput
 
-PROMPT_VERSION = "loreforge-v7-counterevidence"
+PROMPT_VERSION = "loreforge-v8-scoped-claims"
+
+REVIEW_SCOPE_RULES = """
+모순 판정은 문장 표현의 차이가 아니라 두 주장의 적용 범위가 겹치는지를 기준으로 한다.
+먼저 각 주장의 대상, 회차/경로, 시점, 발생 조건, 확정 사건인지 후보/가능성인지 구분한다.
+절 제목과 앞뒤 문단의 조건도 해당 절에 적용한다. 일반 후보 목록은 모든 후보가 모든 회차에서
+동시에 출연한다는 뜻이 아니며, 인물 소개의 대사는 특정 회차에서 실제 발화했다는 증거가 아니다.
+일반 설명과 특정 경로의 예외는 함께 성립한다. 다른 문단에 예외가 명시되어 있다면 일반 문장마다
+그 예외를 반복하지 않았다는 이유로 internal_conflict, conflict_candidate, missing_explanation을 만들지 않는다.
+예: '축제 참가자 중 동행 후보는 유나와 도윤이다'와 '푸른 길에서는 유나가 축제에 오지 않는다'는
+후보군과 회차별 배치의 차이다. '푸른 길에서는 나중에 유나와 만난다'도 축제 불참과 양립한다.
+이런 후보를 검토했다면 실제 예외 문단을 counter_evidence로 인용하여 explained로 판정한다.
+반면 '이번 푸른 길 회차의 축제에서 유나와 결승을 치렀다'는 같은 경로의 불참 규칙과 충돌한다.
+'예외 없이 모든 회차에서 반드시 참가한다'처럼 명시된 절대 주장과 불참 규칙이 동시에 유지되어도
+실제 모순이다. 단지 예외나 분기라는 단어가 있다는 이유로 이러한 충돌까지 제외하지 않는다.
+충돌을 unresolved로 남길 때 rationale에는 두 주장이 겹치는 구체적인 회차/시점/조건과
+반대 근거로도 함께 성립할 수 없는 이유를 짧게 적는다. 동시 성립 불가능한 적용 상황을 원문에서
+찾지 못했다면 결함으로 올리지 않는다. 예외의 반복 기재나 제목 개선은 필요해도 optional이다.
+"""
 
 MODELS = {"analyst": "gpt-5.4-mini", "writer": "gpt-5.4", "reviewer": "gpt-5.4"}
 
@@ -66,6 +84,8 @@ class OpenAIProvider:
             system += " 현재는 기존 원문 검토 모드다. document는 생성 초안이 아닌 불변 원문이다. 원문을 재작성하거나 새로운 이야기·설정·사건을 만들지 말고 실제 문제 위치, 관련 설정 근거, 이유, 최소한의 수정 제안만 검토 후보로 반환한다. 원문 안의 서로 충돌하는 두 주장은 internal_conflict로, 원문과 context의 origin=constraint 문서에 있는 보호 조건의 충돌은 conflict_candidate로 구분한다. context에 대상 원문과 동일한 참조가 있어도 별도 기준 문서로 간주하지 않는다. 같은 원문 문단 안에서 두 주장이 충돌하면 그 문단 근거를 한 번만 인용하고 reason에 서로 충돌하는 두 주장을 구체적으로 비교해 설명한다. 여러 문단에 걸친 모순은 관련 문단을 각각 한 번 인용한다. 같은 문단 근거를 중복해 두 개처럼 만들지 않는다. 실제 충돌이나 설명상 문제가 없으면 candidates를 빈 목록으로 반환한다. 요청이 수정·재작성을 요구하더라도 이 단계는 검토 의견만 제공한다."
         if role == "reviewer":
             system += " 모든 검토는 먼저 원문 전체와 관련 기준에서 후보 지적을 해소하는 설명·예외·범위·회차별 분기를 확인한다. 결론만 짧게 구조화해 candidates로 반환한다. 각 후보의 issue에는 문제 가설과 근거, verdict에는 unresolved(실제 남은 문제), explained(이미 해소됨), optional(선택적 상세화)를 쓴다. counter_evidence에는 발견한 실제 해소·반대 근거를 넣고 rationale에는 그 근거를 고려한 짧은 판정 이유를 쓴다. explained는 반드시 실제 counter_evidence가 있어야 한다. 원문에 차이나 이유가 설명되어 있는데 설명이 없다고 주장하지 않는다. 부분적으로만 해소됐다면 남은 구체적 공백으로 issue.reason을 좁히고 이미 설명된 부분을 인정한다. 명시된 선택지·가능성·서로 다른 회차를 모두 동시에 발생한 사건처럼 취급하지 않는다. 같은 직함이나 후보군이 겹친다는 이유만으로 동일 인물의 재등장이나 같은 회차의 충돌을 가정하지 않는다. 의도된 열린 선택지, 설정집의 요약 수준에서 당연히 생략되는 세부 과정, 구현 가능한 여러 방식 중 하나를 고르라는 요구는 optional이며 결함으로 올리지 않는다. missing_explanation은 현재 사건이나 규칙을 이해하는 데 필요한 연결이 실제로 누락돼 독해나 일관성 판단을 막을 때만 쓴다. 기존 설명이 충분하면 explained로 제외하며 문장을 바꿔 같은 지적을 재생산하지 않는다. 문제 수를 채우지 말고 중요한 후보만 최대 12개, 후보 자체가 없으면 빈 목록을 반환한다. 후보를 검사하는 이 작업은 같은 검토 호출 안에서 수행한다."
+        if role == "reviewer":
+            system += REVIEW_SCOPE_RULES
         response = await self.client.responses.create(
             model=self.models[role], input=[{"role": "system", "content": system},
             {"role": "user", "content": json.dumps({"stage": stage, **indexed_payload(payload)}, ensure_ascii=False)}],

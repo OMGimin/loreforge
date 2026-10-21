@@ -1,4 +1,4 @@
-"""Explicit paid check of six public source-review cases; no manuscript or tracing."""
+"""Explicit paid check of public source-review cases; no manuscript or tracing."""
 import argparse
 import asyncio
 import hashlib
@@ -56,10 +56,16 @@ async def verify(cases, raw):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--execute', action='store_true', help='Authorize up to six reviewer calls, each with at most one transient retry')
+    parser.add_argument('--execute', action='store_true', help='Run one reviewer call per selected case, each with at most one transient retry')
+    parser.add_argument('--case', action='append', dest='case_ids', help='Only run this case ID; repeat to select multiple cases')
     args = parser.parse_args()
     raw = FIXTURE.read_bytes()
     cases = json.loads(raw)
+    if args.case_ids:
+        unknown = set(args.case_ids) - {case['id'] for case in cases}
+        if unknown:
+            parser.error('Unknown case IDs: ' + ', '.join(sorted(unknown)))
+        cases = [case for case in cases if case['id'] in args.case_ids]
     if not args.execute:
         print(f'{len(cases)} public cases ready; no API calls. Add --execute to run.')
         return
