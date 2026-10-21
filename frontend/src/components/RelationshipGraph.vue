@@ -5,6 +5,8 @@ import type { Core, ElementDefinition } from 'cytoscape'
 import type { Evidence, GraphData, GraphItem, GraphResponse } from '../types'
 import { basisLabel, graphForDocument, kindLabel, statusLabel } from '../types'
 import { graphTopology, isolatedItemPositions, relationshipLayout } from '../graph-layout'
+import { graphMetrics, readableViewport, projectedBounds, viewportPositions } from '../graph-camera'
+import type { CameraBox } from '../graph-camera'
 
 const props = defineProps<{ graph: GraphResponse; currentDocumentRef?: string; issueId?: string; issueEvidence?: Evidence[] }>()
 const emit = defineEmits<{ select: [data: GraphData] }>()
@@ -27,6 +29,40 @@ const isolatedCount = ref(0)
 const canvasHeight = ref(470)
 let cy: Core | undefined
 let observer: ResizeObserver | undefined
+let cameraBoxes: CameraBox[] = []
+let fitRevision = 0
+const outsideViewport = ref(false)
+
+function applyMetrics(level = cy?.zoom() || 1) {
+  if (!cy) return
+  const sizes = graphMetrics(level)
+  cy.batch(() => {
+    cy!.nodes().forEach(node => {
+      const size = node.data('type') === 'event' ? sizes.event : node.data('type') === 'rule' ? sizes.rule : sizes.node
+      node.style({ 'font-size': sizes.font, 'text-max-width': sizes.wrap,
+        'text-margin-y': sizes.margin, 'text-background-padding': sizes.padding, width: size, height: size })
+    })
+    cy!.edges().style({ 'font-size': sizes.edgeFont, 'text-max-width': sizes.edgeWrap,
+      'text-background-padding': sizes.padding })
+  })
+}
+function updateViewportNotice() {
+  if (!cy || !cameraBoxes.length) { outsideViewport.value = false; return }
+  const bounds = projectedBounds(cameraBoxes, cy.zoom()), pan = cy.pan()
+  outsideViewport.value = bounds.x1 + pan.x < 0 || bounds.y1 + pan.y < 0
+    || bounds.x2 + pan.x > cy.width() || bounds.y2 + pan.y > cy.height()
+}
+function captureCameraBoxes() {
+  if (!cy) return
+  applyMetrics(1)
+  cameraBoxes = cy.nodes().map(node => {
+    const box = node.boundingBox({ includeOverlays: false, includeUnderlays: false })
+    const p = node.position()
+    return { x: p.x, y: p.y, left: box.x1 - p.x, right: box.x2 - p.x,
+      top: box.y1 - p.y, bottom: box.y2 - p.y }
+  })
+  applyMetrics()
+}
 
 const filteredNodes = computed(() => documentGraph.value.nodes.filter(({ data }) => {
   const stateMatches = status.value === 'all' || (status.value === 'proposal'
@@ -96,6 +132,7 @@ function choose(data: GraphData) {
 }
 function arrange() {
   if (!cy || !host.value || !visibleNodes.value.length) return
+  applyMetrics(1)
   cy.resize()
   const ids = new Set(visibleNodes.value.map(item => item.data.id))
   const edges = documentGraph.value.edges.filter(item => ids.has(item.data.source || '') && ids.has(item.data.target || '')).slice(0, 60)
@@ -141,7 +178,14 @@ function arrange() {
   const bounds = cy.elements().boundingBox({ includeOverlays: false, includeUnderlays: false })
   const widthScale = Math.min(1, Math.max(1, host.value.clientWidth - 80) / Math.max(1, bounds.w))
   canvasHeight.value = expanded.value ? availableHeight : Math.max(host.value.clientWidth < 500 ? 400 : 470, Math.min(720, Math.ceil(bounds.h * widthScale + 80)))
-  nextTick(fit)
+  captureCameraBoxes()
+  nextTick(() => {
+    if (!cy) return
+    cy.resize()
+    cameraBoxes = viewportPositions(cameraBoxes, cy.width(), cy.height())
+    cy.nodes().positions((_node, index) => cameraBoxes[index]!)
+    fit()
+  })
   highlight()
 }
 function setLayout(mode: 'overview' | 'focus') {
@@ -154,7 +198,7 @@ function render() {
   const elements: GraphItem[] = [...visibleNodes.value, ...visibleEdges.value]
   cy.elements().remove()
   cy.add(elements.map(item => ({ data: { ...item.data, display_label: item.data.label + (props.currentDocumentRef && item.data.document_ref !== props.currentDocumentRef ? '\n[기준 문서]' : includeContext.value ? '\n[현재 문서]' : '') } })) as ElementDefinition[])
-  if (!visibleNodes.value.length) componentCount.value = 0
+  if (!visibleNodes.value.length) { componentCount.value = 0; cameraBoxes = []; outsideViewport.value = false }
   arrange()
   highlight()
 }
@@ -197,15 +241,24 @@ function expandedCanvasHeight() {
   const headerHeight = wrap.getBoundingClientRect().top - view.getBoundingClientRect().top
   return Math.max(260, Math.floor(window.innerHeight - 34 - headerHeight - footerHeight))
 }
-function fit() {
+async function fit() {
   if (!cy) return
+  const revision = ++fitRevision
   if (expanded.value) canvasHeight.value = expandedCanvasHeight()
+  // Measure the committed CSS height after teleporting/resizing the dialog.
+  await nextTick()
+  if (!cy || revision !== fitRevision) return
   cy.resize()
-  cy.fit(cy.elements(), 40)
+  const camera = readableViewport(cameraBoxes, cy.width(), cy.height())
+  cy.maxZoom(Math.max(2.5, camera.minZoom * 2))
+  cy.minZoom(camera.minZoom)
+  cy.viewport({ zoom: camera.zoom, pan: camera.pan })
+  applyMetrics()
+  updateViewportNotice()
 }
 function zoom(factor: number) {
   if (!cy) return
-  cy.zoom({ level: Math.min(2.5, Math.max(0.05, cy.zoom() * factor)), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } })
+  cy.zoom({ level: Math.min(cy.maxZoom(), Math.max(cy.minZoom(), cy.zoom() * factor)), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } })
 }
 
 onMounted(() => {
@@ -233,6 +286,9 @@ onMounted(() => {
     ],
   })
   cy.on('mouseover', 'edge', event => event.target.addClass('hover-label'))
+  cy.on('zoom', () => { applyMetrics(); updateViewportNotice() })
+  cy.on('pan', updateViewportNotice)
+  cy.on('dragfree', 'node', () => { captureCameraBoxes(); updateViewportNotice() })
   cy.on('mouseout', 'edge', event => event.target.removeClass('hover-label'))
   cy.on('tap', 'node, edge', event => choose(event.target.data() as GraphData))
   cy.on('tap', event => {
@@ -289,10 +345,11 @@ onBeforeUnmount(() => { observer?.disconnect(); cy?.destroy() })
       <div v-if="!visibleNodes.length" class="graph-empty"><span class="empty-orbit">◇</span><strong>{{ graph.nodes.length ? '조건에 맞는 항목이 없어요' : '아직 연결된 설정이 없어요' }}</strong><p>{{ graph.nodes.length ? '검색어·종류·상태와 연결 항목 필터를 확인해주세요.' : '본문은 그대로 읽을 수 있습니다. 관계가 없는 입력도 정상입니다.' }}</p></div>
     </div>
     <div class="graph-tools">
-      <div class="graph-controls"><button aria-label="그래프 축소" title="축소" @click="zoom(0.8)">−</button><button aria-label="그래프 확대" title="확대" @click="zoom(1.25)">+</button><button aria-label="그래프 화면에 맞춤" @click="fit">맞춤</button></div>
+      <div class="graph-controls"><button aria-label="그래프 축소" title="이름이 겹치지 않는 범위에서 축소" @click="zoom(0.8)">−</button><button aria-label="그래프 확대" title="확대" @click="zoom(1.25)">+</button><button aria-label="그래프 화면에 맞춤" title="글씨 크기를 유지하며 보기 맞춤" @click="fit">맞춤</button></div>
       <div class="graph-legend"><span><i class="legend-solid" />문서에 명시</span><span><i class="legend-dash" />AI 추론</span></div>
     </div>
     <div class="graph-summary"><span>항목 {{ visibleNodes.length }} / 전체 {{ graph.nodes.length }} · 관계 {{ visibleEdges.length }} / 전체 {{ graph.edges.length }}</span><span>탐색은 AI를 호출하지 않습니다</span></div>
+    <p v-if="outsideViewport" class="graph-note" role="status">글씨가 작아지거나 이름이 겹치지 않도록 표시했어요. 화면 밖 항목은 빈 공간을 끌어 이동하거나 {{ expanded ? '검색·목록으로 찾아보세요.' : '크게 보기로 살펴보세요.' }}</p>
     <p v-if="limited" class="notice warning">표시 한도는 30개 항목·60개 관계입니다. 원본은 모두 보존됩니다. 종류·검색·이웃 필터로 범위를 좁혀주세요.</p>
     <p v-for="warning in graph.warnings" :key="warning" class="notice warning">그래프 부분 표시 · {{ warning }}</p>
     <p v-if="issueId" class="graph-note">주황색 강조는 선택한 쟁점과 근거 문단이 겹치는 항목·관계입니다. 문단 전체가 연결되어 실제 범위보다 넓을 수 있습니다.</p>
@@ -320,4 +377,5 @@ onBeforeUnmount(() => { observer?.disconnect(); cy?.destroy() })
 .graph-layout-caption{color:#526A84}.graph-controls button,.graph-view-actions button{background:#EEF4FA}
 .graph-list-items button{background:#EEF4FA}.graph-list-items button.chosen{background:#D6E6F3;border-color:#0F52BA}
 .graph-note{color:var(--warning)}.graph-expanded-help span{color:var(--accent)}
+.graph-canvas-wrap{min-height:0;flex-shrink:0}
 </style>
