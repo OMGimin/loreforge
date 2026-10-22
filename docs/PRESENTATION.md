@@ -2,7 +2,9 @@
 
 **SKALA 4기 광주캠퍼스 G074 김지민**
 
-[발표 슬라이드 열기](presentation/LoreForge-G074-KimJimin.pptx)
+[Keynote 발표 슬라이드 열기](presentation/LoreForge-G074-KimJimin.key) · [PowerPoint 원본 열기](presentation/LoreForge-G074-KimJimin.pptx)
+
+Keynote 버전은 제목·본문에 Pretendard를, 코드 예시에 Menlo를 사용한다. 10장 모두 아래 대본을 발표자 메모에 포함했다. Keynote의 **보기 → 발표자 메모 보기**에서 대본을 확인하고 수정할 수 있다. PowerPoint 원본은 변환 전 서체를 유지한다.
 
 [코드 이해·질문 대비 노트](PRESENTATION_PREP.md)에서 수업 요구와 각 구현의 동작·선택 이유·한계를 확인한다. 슬라이드 오른쪽 아래 시간 표시는 제거했고, 시간 배분은 이 대본과 발표자 노트에만 유지한다.
 
